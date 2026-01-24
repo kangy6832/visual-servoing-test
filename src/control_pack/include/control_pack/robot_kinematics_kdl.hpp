@@ -9,6 +9,8 @@
  * @date 2026-01-22
  */
 
+#ifndef ROBOT_KINEMATICS_KDL_HPP
+#define ROBOT_KINEMATICS_KDL_HPP
 
 #include <eigen3/Eigen/Core>
 
@@ -24,6 +26,7 @@
 #include <kdl/jacobian.hpp>  // 雅可比矩阵
 #include <Eigen/Dense>  // 密集矩阵运算
 #include <Eigen/SVD>  // 奇异值分解
+#include <kdl/jntarray.hpp>
 #include <kdl/segment.hpp>
 #include <vector>
 #include <string>
@@ -107,9 +110,9 @@ namespace RobotKinematicsKDL {
      /**
      * @brief 未初始化异常
      */
-     class NotInitialzedExpection : public std::runtime_error{
+     class NotInitializedException : public std::runtime_error{
         public :
-            explicit NotInitialzedExpection(const std::string& component) : std::runtime_error(component + 
+            explicit NotInitializedException(const std::string& component) : std::runtime_error(component + 
                 " not initialized. Call init() first."){}
      };
 
@@ -382,17 +385,17 @@ namespace RobotKinematicsKDL {
      * 该类封装了使用KDL进行正向运动学计算、使用Eigen进行矩阵运算的
      * 完整机械臂运动学解决方案。
      */
-     class RobotArmKinematics {
+    class RobotArmKinematics {
         public:
             /**
-            * @brief 构造函数
-            * @param num_joints 关节数量
-            */
+             * @brief 构造函数
+             * @param num_joints 关节数量
+             */
             explicit RobotArmKinematics(size_t num_joints = 6);
 
             /**
-            * @brief 析构函数
-            */
+             * @brief 析构函数
+             */
             ~RobotArmKinematics();
 
             // 禁止拷贝
@@ -400,6 +403,335 @@ namespace RobotKinematicsKDL {
             RobotArmKinematics& operator = (const RobotArmKinematics&) = delete;
             RobotArmKinematics(RobotArmKinematics&&) = delete;
             RobotArmKinematics& operator=(RobotArmKinematics&&) = delete;
-     }
 
-};
+
+            // ============================================================
+            // 初始化方法
+            // ============================================================
+
+            /**
+             * @brief 使用DH参数初始化机械臂链
+             * @param dh_params DH参数列表
+             * @return true 初始化成功
+             */
+            bool initFromDHParams(const std::vector<DHParameters>& dh_params);
+
+            /**
+             * @brief 使用标准机械臂参数初始化
+             * @return true 初始化成功
+             */
+            bool initStandard6DOF();
+
+            /**
+             * @brief 从URDF文件加再机械臂模型
+             * @param urdf_path URDF文件路径
+             * @param base_link 基座连接名称
+             * @param tip_link 末端链接名称
+             * @return true 加载成功者
+             */
+             bool loadFromURDF (const std::string& urdf_path, 
+                                const std::string& base_link = "base_link", 
+                                const std::string& tip_link = "tool0");
+
+            /**
+             * @brief 手动构建机械臂链 
+             * @param chain KDL机械臂链
+             */
+            void setChain(const KDL::Chain& chain);
+
+            /**
+             * @brief 设置关节限位
+             * @param limits 关节限位配置
+             */
+            void setJointLimits(const JointLimits& limits);
+
+            /**
+             * @brief 配置控制器参数
+             * @param config 控制器参数
+             */
+            void setConfig(const ControllerConfig& config);
+
+            /**
+            * @brief 检查是否已初始化
+            * @return true 已初始化
+            */
+            bool isInitialized() const { return is_initialized_.load(); }
+
+            /**
+            * @brief 获取关节数量
+            * @return 关节数量
+            */
+            size_t getNumJoints() const { return num_joints_; }
+
+
+            // ============================================================
+            // 正向运动学
+            // ============================================================
+
+            /**
+             * @brief 计算正向运动学（末端位姿）
+             * @param joint_positions 关节位置 [rad 或 m]
+             * @return 末端执行器位姿
+             * @throws DimensionMismatchException 维度不匹配
+             * @throws NotInitializedException 未初始化
+             */
+            EndEffectorPose computeForwardKinematics(const Eigen::VectorXd& joint_positions);
+
+            /**
+             * @brief 计算正向运动学（完整变换矩阵）
+             * @param joint_positions 关节位置
+             * @return 4x4齐次变换矩阵
+             */
+            Eigen::Matrix4d computeForwardKinematicsMatrix(const Eigen::VectorXd& joint_position); 
+
+
+            // ============================================================
+            // 雅可比矩阵
+            // ============================================================
+
+            /**
+             * @brief 计算雅克比矩阵
+             * @param joitn_positions 关节位置
+             * @return 6×n 雅克比矩阵
+             * @throws DimensionMismatchException 维度不匹配
+             */
+            Eigen::MatrixXd computeJacobian(const Eigen::VectorXd& joint_positions);
+
+            /**
+             * @brief 计算雅克比矩阵的导数
+             * @param joint_positions 关节位置
+             * @param joint_velocities 关节速度
+             * @return 6×n 雅克比矩阵导数
+             */
+            Eigen::MatrixXd computeJacobianDerivative(
+                const Eigen::VectorXd& joint_positions, 
+                const Eigen::VectorXd& joint_velocities
+            );
+
+
+            // ============================================================
+            // 速度计算
+            // ============================================================
+
+            /**
+             * @brief 正向速度运动学：从关节速度计算末端速度
+             * @param joint_positions 关节位置
+             * @param joint_velocities 关节速度
+             * @return 末端速度(Twist)
+             * @throw DimensionMismatchExpection 维度不匹配
+             * @throw SingularityException 奇异位形
+             */
+            CartesianTwist forwardVelocityKinematics(
+                const Eigen::VectorXd& joitn_positions, 
+                const Eigen::VectorXd& joint_velocities
+            );
+
+            /**
+             * @brief 逆向速度运动学：从末端速度计算关节速度
+             * @param joint_position 关节位置
+             * @param desired_velocity 期望末端速度
+             * @return 关节速度
+             */
+            Eigen::VectorXd inverseVelocityKinematics(
+                const Eigen::VectorXd& joint_positions, 
+                const CartesianTwist& desired_velocity
+            );
+
+            /**
+             * @brief 使用阻尼最小二乘法计算逆速度
+             * @param joint_positions 关节位置
+             * @param desired_velocity 期望末端速度
+             * @param damping_factor 阻尼因子
+             * @return 关节速度
+             */
+            Eigen::VectorXd dampedLeastSquaresInverseVelocity(
+                const Eigen::VectorXd& joint_positions, 
+                const CartesianTwist& desired_velocity, 
+                double damping_factor = -1.0
+            );
+
+
+            // ============================================================
+            // 加速度计算
+            // ============================================================
+
+            /**
+             * @brief 正向加速度运动学：从关节加速度计算末端加速度
+             * @param joint_positions 关节位置
+             * @param joint_velocities 关节速度
+             * @param joint_accelerations 关节加速度 [rad/s²]
+             * @return 末端加速度
+             */
+            CartesianAcceleration forwardAccelerationKinematics(
+                const Eigen::VectorXd& joint_positions, 
+                const Eigen::VectorXd& joint_velocities, 
+                const Eigen::Vector3d& joint_accelerations
+            );
+
+
+            // ============================================================
+            // 完整运动状态
+            // ============================================================
+
+            /**
+             * @brief 计算完整的笛卡尔空间运动状态
+             * @param joint_state 关节状态（位置、速度、加速度）
+             * @return 笛卡尔空间运动状态
+             */
+            CartesianMotionState computeFullCartesianState(
+                const Eigen::VectorXd& joint_positions, 
+                const Eigen::VectorXd& joint_velocities, 
+                const Eigen::VectorXd& joint_accelerations
+            );
+
+
+            // ============================================================
+            // 奇异值分析
+            // ============================================================
+
+            /**
+             * @brief 分析雅克比矩阵的奇异值
+             * @param joint_positions 关节位置
+             * @return true 接近奇异位形
+             */
+            bool isNearSingularity(const Eigen::VectorXd& joint_positions);
+
+            /**
+             * @brief 计算可操作性指标
+             * @param joint_positions 关节位置
+             * @return 可操作性指标
+             */
+            double computeManipulabilityIndex(const Eigen::VectorXd& joint_positions);
+
+            
+            // ============================================================
+            // 工具方法
+            // ============================================================
+
+            /**
+             * @brief 验证输入数据的有效性
+             * @param data 输入数据
+             * @param context 上下文描述
+             * @throws DimensionMismatchException 维度不匹配
+             */
+            template<typename Derived>
+            void validateInput(
+                const Eigen::MatrixBase<Derived>& data, 
+                const std::string& context
+            ) const;
+
+            /**
+             * @brief 检查数据是否为有限值
+             * @param data 输入数据
+             * @param context 上下文描述
+             * @throws std::runtime_error 包含无效值
+             */
+            template<typename Derived>
+            void checkFinite(
+                const Eigen::MatrixBase<Derived>& data,  // MatrixBase 通用矩阵基类
+                const std::string& context
+            ) const;
+
+            /**
+             * @brief 获取最后计算的雅克比矩阵
+             * @return 雅克比矩阵
+             */
+            const Eigen::MatrixXd& getLastJacobian() const{return last_jacobian_;}
+
+            /**
+             * @brief 获取状态信息
+             * @return 状态消息
+             */
+            const std::string& getStatusMessage() const {return status_message_;}
+
+        
+        private:
+            /**
+             * @brief 初始化KDL求解器
+             */
+             void initSolvers();
+
+            /** 
+             * @brief 预分配内存
+             */
+            void preallocateMemory();
+
+             /**
+             * @brief 验证关节位置是否在限位范围内
+             * @param positions 关节位置
+             * @throws JointLimitException 超出限位
+             */
+            void validateJointLimits(const Eigen::VectorXd& positions) const;
+
+            // KDL组件
+            std::unique_ptr<KDL::Chain> chain_;
+            std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
+            std::unique_ptr<KDL::ChainJntToJacDotSolver>jocobian_dot_solver_;
+
+            // 内部状态
+            size_t num_joints_;
+            std::atomic<bool> is_initialized_{false};
+            std::atomic<int> error_count_{0};
+
+            // KDL  数据容器（预分配以避免运行时分配）
+            mutable KDL::JntArray kdl_joint_position_;  // mutable 允许在 const 成员函数中修改该变量。
+            mutable KDL::JntArray kdl_joint_velocities_;  // KDL::JntArray，KDL 库中的关节数组
+            mutable KDL::JntArray kdl_joint_accelerations_;
+            mutable KDL::Jacobian kdl_jacobian_;
+
+            // Eigen数据容器
+            Eigen::MatrixXd last_jacobian_;
+            Eigen::MatrixXd last_jacobian_dot_;
+
+            // 配置
+            JointLimits joint_limits_;
+            ControllerConfig config_;
+
+            // 状态消息
+            std::string status_message_;
+            mutable std::mutex status_mutex_;
+    };
+
+    // ============================================================
+    // 模板方法实现
+    // ============================================================
+
+    template<typename Derived>
+    void RobotArmKinematics::validateInput(
+        const Eigen::MatrixBase<Derived>& data,
+        const std::string& context) const {
+        
+        if (!is_initialized_.load()) {
+            throw NotInitializedException("RobotArmKinematics");
+        }
+
+        if (static_cast<size_t>(data.size()) != num_joints_) {
+            throw DimensionMismatchException(
+                static_cast<int>(num_joints_),
+                static_cast<int>(data.size()),
+                context
+            );
+        }
+    }
+
+    template<typename Derived>
+    void RobotArmKinematics::checkFinite(
+        const Eigen::MatrixBase<Derived>& data,
+        const std::string& context) const {
+        
+        if (!config_.enable_nan_check) return;
+
+        for (int i = 0; i < data.size(); ++i) {
+            if (!std::isfinite(data(i))) {
+                throw std::runtime_error(
+                    "Non-finite value detected in " + context + 
+                    " at index " + std::to_string(i)
+                );
+            }
+        }
+    }
+
+} // namespace RobotKinematicsKDL
+
+#endif // ROBOT_KINEMATICS_KDL_HPP
+
