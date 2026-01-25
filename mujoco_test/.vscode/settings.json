@@ -1,0 +1,155 @@
+{
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_task_constructor_core/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_py/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/srdfdom/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_task_constructor_msgs/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_task_constructor_core/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_py/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/srdfdom/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/moveit_task_constructor_msgs/local/lib/python3.10/dist-packages",
+        "/home/kyy/cpp_project/robot_arm/ws_moveit/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+
+
+
+
+    "vim.enableNeovim": false,
+    "vim.useCtrlKeys": true,
+    "vim.mouseEnabled": true, // 允许使用鼠标
+    
+    "vim.handleKeys": {
+        "<C-a>": false,
+        "<C-c>": false,
+        "<C-f>": false,
+        "<C-p>": false,
+        "<C-s>": false,
+        "<C-v>": false,
+        "<C-z>": false,
+        "<C-x>": false
+    },
+    
+    "vim.incsearch": true,  // 搜索时边输入边显示结果
+    "vim.hlsearch": true,   // 搜索后所有匹配位置高亮
+    "vim.ignorecase": true, // 搜索时不区分大小写
+    "vim.smartcase": true,  // 搜索时智能区分大小写
+    
+    "vim.useSystemClipboard": true, // 使用系统剪切版
+    "vim.autoindent": true,         // 自动继承上一行的缩进
+    
+    "editor.lineNumbers": "relative",// 显示相对行号
+
+    "vim.cursorStylePerMode": { // 光标样式
+        "n": "block",
+        "i": "line",
+        "v": "underline",
+        "R": "underline"
+    },
+
+    "vim.easymotion": true, // EasyMotion 快速跳转
+    "vim.sneak": true,      // Sneak 快速跳转
+    "vim.surround": true,   // Surround 环绕编辑
+    
+    "vim.leader": " ",
+
+    // Ctrl键作为Escape
+    "vim.customEscKeys": {
+        "<C-[>": "action"
+    },
+    
+    "vim.normalModeKeyBindingsNonRecursive": [
+        {
+            "before": ["<leader>", "w"],
+            "commands": [":w"]
+        },
+        {
+            "before": ["<leader>", "q"],
+            "commands": [":q"]
+        },
+        {
+            "before": ["<leader>", "d", "d"],
+            "commands": [":normal", "dd"]
+        },
+        {
+            "before": ["<leader>", "y", "y"],
+            "commands": [":normal", "yy"]
+        },
+        {
+            "before": ["<leader>", "p"],
+            "after": ["p"]
+        },
+        {
+            "before": ["<leader>", "P"],
+            "after": ["P"]
+        },
+        {
+            "before": ["<leader>", "/"],
+            "commands": ["editor.action.commentLine"]
+        },
+        {
+            "before": ["<leader>", "f", "f"],
+            "commands": ["workbench.action.quickOpen"]
+        },
+        {
+            "before": ["<leader>", "e"],
+            "commands": ["workbench.files.action.focusFilesExplorer"]
+        },
+        {
+            "before": ["<leader>", "h"],
+            "commands": [":noh"]
+        },
+        {
+            "before": ["<leader>", "n"],
+            "commands": ["editor.action.toggleLineNumber"]
+        },
+        {
+            "before": ["<leader>", "["],
+            "after": ["<Esc>"]
+        }
+    ],
+    
+    "vim.insertModeKeyBindings": [
+        {
+            "before": ["j", "k"],
+            "after": ["<Esc>"]
+        },
+        {
+            "before": ["j", "j"],
+            "after": ["<Esc>"]
+        },
+        {
+            "before": ["<C-u>"],
+            "after": ["<C-o>", "d", "$"]
+        },
+        {
+            "before": ["<C-w>"],
+            "after": ["<C-o>", "d", "b"]
+        }
+    ],
+    
+    "vim.visualModeKeyBindingsNonRecursive": [
+        {
+            "before": ["<leader>", "p"],
+            "commands": ["editor.action.clipboardPasteAction"]
+        },
+        {
+            "before": ["<leader>", "y"],
+            "commands": ["editor.action.clipboardCopyAction"]
+        },
+        {
+            "before": ["<leader>", "/"],
+            "commands": ["editor.action.commentLine"]
+        }
+    ]
+}
+
