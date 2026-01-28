@@ -1,0 +1,54 @@
+
+
+# 构建文件夹
+build/
+
+
+# 安装文件夹
+install/
+
+
+# 日志文件
+log/
+logs/
+
+
+# IDE 相关文件
+.vscode/
+
+.cache/
+
+# 编译生成文件
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.class
+
+# CMake 生成文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# 依赖文件夹
+deps/
+dependencies/
+third_party/
+external/
+
+# 临时文件
+temp/
+tmp/
+*.tmp
+*.temp
+
+# 配置文件
+*.user
+*.suo
+*.sdf
+*.opensdf
