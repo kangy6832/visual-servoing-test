@@ -179,6 +179,7 @@ namespace RobotKinematicsKDL {
         bool enable_singularity_check = true; // 奇异点检测
         bool enable_joint_limit_check = true;
         bool enable_nan_check = true;
+        bool use_damped_least_squares = false;
         double damping_factor = 0.01;
         int max_iterations = 100;
         double convergence_threshold = 1e-4;
@@ -568,7 +569,7 @@ namespace RobotKinematicsKDL {
             CartesianAcceleration forwardAccelerationKinematics(
                 const Eigen::VectorXd& joint_positions, 
                 const Eigen::VectorXd& joint_velocities, 
-                const Eigen::Vector3d& joint_accelerations
+                const Eigen::VectorXd& joint_accelerations
             );
 
 
@@ -594,6 +595,13 @@ namespace RobotKinematicsKDL {
 
             /**
              * @brief 分析雅克比矩阵的奇异值
+             * @param joint_positions 关节位置
+             * @return 奇异值分析结果
+             */
+            SingularityAnalysis analyzeSingularity(const Eigen::VectorXd& joint_positions);
+
+            /**
+             * @brief 检查是否接近奇异位形
              * @param joint_positions 关节位置
              * @return true 接近奇异位形
              */
@@ -670,7 +678,7 @@ namespace RobotKinematicsKDL {
             std::unique_ptr<KDL::Chain> chain_;
             std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;  // ChainFkSolverPos_recursive 计算机器人正向运动学
             std::unique_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;   // 计算雅克比矩阵
-            std::unique_ptr<KDL::ChainJntToJacDotSolver> jocobian_dot_solver_;  // 计算雅克比矩阵的时间导数
+            std::unique_ptr<KDL::ChainJntToJacDotSolver> jacobian_dot_solver_;  // 计算雅克比矩阵的时间导数
 
             // 内部状态
             size_t num_joints_;
