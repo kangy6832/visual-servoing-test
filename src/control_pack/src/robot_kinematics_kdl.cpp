@@ -53,9 +53,9 @@ namespace RobotKinematicsKDL{
             throw std::runtime_error("Cannot initialize solvers: Invalid chain");
         }
 
-        fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(*chain_);
-        jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_);
-        jacobian_dot_solver_ = std::make_unique<KDL::ChainJntToJacDotSolver>(*chain_);
+        fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(*chain_); // 正运动学位置求解器
+        jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_); // 雅克比矩阵求解器
+        jacobian_dot_solver_ = std::make_unique<KDL::ChainJntToJacDotSolver>(*chain_); // 雅克比矩阵导数求解器
         is_initialized_ = true;
     }
 
@@ -163,7 +163,7 @@ namespace RobotKinematicsKDL{
 
         // 计算正向运动学
         KDL::Frame kdl_frame;
-        int result = fk_solver_->JntToCart(kdl_joint_positions_, kdl_frame);
+        int result = fk_solver_->JntToCart(kdl_joint_positions_, kdl_frame); // JntToCart 关节角度->末端位置
         if(result < 0){
             throw KinematicSolverException(
                 result, "ChainFkSolverPos_recursive"
@@ -251,7 +251,7 @@ namespace RobotKinematicsKDL{
         //计算雅克比矩阵导数
         KDL::Jacobian jacobian_dot(num_joints_);
 
-        int result = jacobian_dot_solver_->JntToJacDot(KDL::JntArrayVel(kdl_joint_positions_, kdl_joint_velocities_), jacobian_dot);
+        int result = jacobian_dot_solver_->JntToJacDot(KDL::JntArrayVel(kdl_joint_positions_, kdl_joint_velocities_), jacobian_dot); // JntToJacDot 计算雅可比矩阵导数与关节速度的乘积
         if(result < 0){
             throw KinematicSolverException(
                 result, "ChainJntToJacDotSolver"
@@ -296,7 +296,7 @@ namespace RobotKinematicsKDL{
 
         // 计算末端速度：v = J * q_dot
         Eigen::VectorXd cartesian_velocity = jacobian * joint_velocities;
-        return CartesianTwist::fromVector(cartesian_velocity);
+        return CartesianTwist::fromVector(cartesian_velocity); // fromVector Eigen向量转KDL
     }
 
     Eigen::VectorXd RobotArmKinematics::inverseVelocityKinematics(
@@ -436,7 +436,7 @@ namespace RobotKinematicsKDL{
         Eigen::MatrixXd jacobian = computeJacobian(joint_positions);
 
         // 奇异值分析
-        Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian, Eigen::ComputeThinU);
+        Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian, Eigen::ComputeThinU); // JacobiSVD 计算奇异值分解
         analysis.singular_values.resize(svd.singularValues().size());
 
         for (size_t i = 0 ; i < svd.singularValues().size() ; ++i){

@@ -200,15 +200,19 @@ namespace RobotKinematicsKDL {
         Eigen::Vector3d angular ;  // 角速度 (wx, wy, wz) [rad/s]
 
         CartesianTwist() : linear(Eigen::Vector3d::Zero()), angular(Eigen::Vector3d::Zero()) {}
+
         CartesianTwist(double vx, double vy, double vz, double wx, double wy, double wz) : 
             linear(vx, vy, vz), angular(wx, wy, wz){}
+
         CartesianTwist(const Eigen::Vector3d& lin, const Eigen::Vector3d& ang) : 
             linear(lin), angular(ang){}
+
         Eigen::VectorXd toVector() const{
             Eigen::VectorXd result(6);
             result << linear, angular;
             return result;
         }
+
         static CartesianTwist fromVector(const Eigen::VectorXd& v){
             if(v.size() != 6){
                 throw DimensionMismatchException(6, v.size(), 
@@ -333,11 +337,11 @@ namespace RobotKinematicsKDL {
      */
      struct SingularityAnalysis {
         std::vector<double> singular_values;
-        double condition_number;
+        double condition_number; // 条件数
         bool is_near_singular;
-        double smallest_singular_value;
+        double smallest_singular_value; // 最小奇异值
         Eigen::Vector3d directional_manipulability;
-        double manipulability_index;
+        double manipulability_index; // 最大奇异值
 
         SingularityAnalysis() : condition_number(0.0), is_near_singular(false), 
                                 smallest_singular_value(0.0), manipulability_index(0.0){}
@@ -366,14 +370,15 @@ namespace RobotKinematicsKDL {
          * @brief 转换为KDL连杆
          */
         KDL::Segment toKDLSegment(const std::string& name= "DEFAULT_NAME") const{
-            KDL::Rotation rotation = KDL::Rotation::RotX(alpha) * KDL::Rotation::RotZ(theta);
+            KDL::Rotation rotation = KDL::Rotation::RotX(alpha) * KDL::Rotation::RotZ(theta); // Rotation 3×3旋转矩阵，RotX 绕x轴旋转
             KDL::Vector translation(a, -d * std::sin(alpha), d * std::cos(alpha));
-            KDL::Frame frame(rotation, translation);
+
+            KDL::Frame frame(rotation, translation); // Frame 坐标系
 
             if(is_revolute) {
-                return KDL::Segment(name, KDL::Joint(KDL::Joint::RotZ), frame);
+                return KDL::Segment(name, KDL::Joint(KDL::Joint::RotZ), frame); // RotZ 绕Z轴旋转的关节
             } else {
-                return KDL::Segment(name,KDL::Joint(KDL::Joint::TransZ), frame);
+                return KDL::Segment(name,KDL::Joint(KDL::Joint::TransZ), frame); // Trans 沿Z轴方向平移的关节
             }
         }
     };
@@ -431,7 +436,7 @@ namespace RobotKinematicsKDL {
              * @param urdf_path URDF文件路径
              * @param base_link 基座连接名称
              * @param tip_link 末端链接名称
-             * @return true 加载成功者
+             * @return true 加载成功
              */
              bool loadFromURDF (const std::string& urdf_path, 
                                 const std::string& base_link = "base_link", 
@@ -693,7 +698,7 @@ namespace RobotKinematicsKDL {
 
             // Eigen数据容器
             Eigen::MatrixXd last_jacobian_;
-            Eigen::MatrixXd last_jacobian_dot_;
+            Eigen::MatrixXd last_jacobian_dot_; // 缓存上一时刻的雅克比矩阵及其导数
 
             // 配置
             JointLimits joint_limits_;
