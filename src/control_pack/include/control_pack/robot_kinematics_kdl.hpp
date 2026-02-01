@@ -40,6 +40,34 @@
 #include <cmath>
 #include <limits>  // 数值极限
 
+/**
+ * KDL 逆向速度运动学求解器（Jacobian 伪逆法）
+ * 用于：由末端 Twist 计算关节速度 dq
+ * 原理：dq = J⁺ * v
+ * 注意：在奇异位形附近数值不稳定
+ */
+#include <kdl/chainiksolvervel_pinv.hpp>   // IK 速度求解器
+
+/**
+ * KDL 位姿级逆运动学求解器（Newton–Raphson 数值迭代）
+ * 
+ * ⚠ 重要说明：ChainIkSolverPos_NR 本身【不能单独工作】它内部必须依赖：
+ *   - 一个正向运动学求解器（FK）
+ *   - 一个速度级 IK 求解器（ChainIkSolverVel_*）
+ * 
+ * 数学形式： q(k+1) = q(k) + J⁺(q) * (x_desired - FK(q))
+ * 
+ * 因此它只是一个“框架调度器”，不是完整 IK 算法
+ */
+#include <kdl/chainiksolverpos_nr.hpp>     // IK 位姿求解器（Newton-Raphson）
+
+#include <fstream>
+#include <streambuf>
+
+#include <urdf/model.h>
+#include <kdl_parser/kdl_parser.hpp>
+
+
 namespace RobotKinematicsKDL {
     // ============================================================
     // 基础常量定义
@@ -495,6 +523,39 @@ namespace RobotKinematicsKDL {
             Eigen::Matrix4d computeForwardKinematicsMatrix(const Eigen::VectorXd& joint_position); 
 
 
+            // ==============================================================
+            // 逆向运动学
+            // ==============================================================
+
+            /**
+             * @brief 数值法逆运动学（位姿）
+             * @param target_pose 目标末端位姿
+             * @param initial_guess 初始关节角
+             * @return 求解得到的关节角
+             * 
+             * @throws DimensionMismatchException 维度不匹配
+             * @throws KinematicSolverException IK求解失败
+             * @throws JointLimitException 超出关节限位
+             */
+            Eigen::VectorXd inverseKinematics(
+                const EndEffectorPose& target_pose,
+                const Eigen::VectorXd& initial_guess
+            );
+
+            /**
+             * @brief 带成功标志的逆运动学（不抛异常版本，适合实时）
+             * @param target_pose 目标末端位姿
+             * @param initial_guess 初始关节角
+             * @param solution 输出解
+             * @return true 成功
+             */
+            bool inverseKinematics(
+                const EndEffectorPose& target_pose,
+                const Eigen::VectorXd& initial_guess,
+                Eigen::VectorXd& solution
+            );
+
+
             // ============================================================
             // 雅可比矩阵
             // ============================================================
@@ -664,7 +725,14 @@ namespace RobotKinematicsKDL {
         
         private:
             /**
-             * @brief 初始化KDL求解器
+             * @brief 初始化 KDL 运动学求解器
+             *
+             * 初始化顺序：
+             *  1. ChainFkSolverPos_recursive
+             *  2. ChainIkSolverVel_pinv
+             *  3. ChainIkSolverPos_NR（依赖前两者）
+             *
+             * 若未正确初始化，IK 求解会直接失败
              */
              void initSolvers();
 
@@ -708,6 +776,43 @@ namespace RobotKinematicsKDL {
             // 状态消息
             std::string status_message_;
             mutable std::mutex status_mutex_;
+
+            // ================= IK 求解器 =================
+            //
+            // 速度级 IK 求解器（Jacobian 伪逆）
+            // 用于：
+            //  1. 独立的逆速度运动学
+            //  2. 为位姿级 IK（NR 法）提供 dq = J⁺ * dx
+            std::unique_ptr<KDL::ChainIkSolverVel_pinv> ik_vel_solver_;
+
+            // 位姿级 IK 求解器（Newton-Raphson 数值迭代）
+            // 依赖：
+            //  1. fk_solver_
+            //  2. ik_vel_solver_
+            // 用于：
+            //  给定末端 Frame，迭代求解关节角
+            std::unique_ptr<KDL::ChainIkSolverPos_NR> ik_pos_solver_;
+
+
+
+            static KDL::Frame toKDLFrame(const EndEffectorPose& pose)
+            {
+                const Eigen::Matrix3d R = pose.orientation.toRotationMatrix();
+
+                return KDL::Frame(
+                    KDL::Rotation(
+                        R(0,0), R(0,1), R(0,2),
+                        R(1,0), R(1,1), R(1,2),
+                        R(2,0), R(2,1), R(2,2)
+                    ),
+                    KDL::Vector(
+                        pose.position.x(),
+                        pose.position.y(),
+                        pose.position.z()
+                    )
+                );
+            }
+
     };
 
     // ============================================================
@@ -754,4 +859,9 @@ namespace RobotKinematicsKDL {
 } // namespace RobotKinematicsKDL
 
 #endif // ROBOT_KINEMATICS_KDL_HPP
+
+
+
+
+
 

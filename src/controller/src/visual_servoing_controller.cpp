@@ -31,7 +31,27 @@
         state_publisher_ = get_node()->create_publisher<Robot>("robot_status", 10);
         target_subscriber_ = get_node()->create_subscription<Robot>(
             "robot_target", 10, [this](const Robot& msg){joints_target_positons_ = msg;});
-        joints_name_ = {""}
+        joints_name_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
+    }
+
+    controller_interface::CallbackReturn Controller::on_configure(const rclcpp_lifecycle::State& previous_state){
+        (void)previous_state;
+        return controller_interface::ControllerInterface::CallbackReturn::SUCCESS;
+    }
+
+    controller_interface::CallbackReturn Controller::on_activate(const rclcpp_lifecycle::State& previous_state){
+        (void)previous_state;
+        return controller_interface::ControllerInterface::CallbackReturn::SUCCESS;
+    }
+
+    controller_interface::CallbackReturn Controller::on_deactivate(const rclcpp_lifecycle::State& previous_state){
+        (void)previous_state;
+        return controller_interface::ControllerInterface::CallbackReturn::SUCCESS;
+    }
+
+    controller_interface::return_type Controller::update(const rclcpp::Times& time, const rclcpp::Duration& period){
+        auto joints_num = joints_name_.size();
+        robot_interfaces::msg::Robot state_msg;
     }
 
 

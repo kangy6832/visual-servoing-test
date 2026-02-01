@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <Eigen/src/IterativeLinearSolvers/IterativeSolverBase.h>
 
+
+
 namespace RobotKinematicsKDL{
 
     // ============================================================
@@ -56,6 +58,17 @@ namespace RobotKinematicsKDL{
         fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(*chain_); // 正运动学位置求解器
         jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_); // 雅克比矩阵求解器
         jacobian_dot_solver_ = std::make_unique<KDL::ChainJntToJacDotSolver>(*chain_); // 雅克比矩阵导数求解器
+
+        ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(*chain_);
+
+        ik_pos_solver_ = std::make_unique<KDL::ChainIkSolverPos_NR>(
+            *chain_,
+            *fk_solver_,
+            *ik_vel_solver_,
+            config_.max_iterations,
+            config_.convergence_threshold
+        );
+
         is_initialized_ = true;
     }
 
@@ -106,7 +119,102 @@ namespace RobotKinematicsKDL{
     bool RobotArmKinematics::loadFromURDF(const std::string& urdf_path, 
                                           const std::string& base_link, 
                                           const std::string& tip_link){
-    // 使用依赖
+        // ===============================
+        // 1. 读取 URDF 文件
+        // ===============================
+        std::ifstream urdf_file(urdf_path);
+        if (!urdf_file.is_open()) {
+            status_message_ = "Failed to open URDF file: " + urdf_path;
+            return false;
+        }
+
+        std::string urdf_xml(
+            (std::istreambuf_iterator<char>(urdf_file)),
+            std::istreambuf_iterator<char>()
+        );
+        urdf_file.close();
+
+        // ===============================
+        // 2. URDF → urdf::Model
+        // ===============================
+        urdf::Model urdf_model;
+        if (!urdf_model.initString(urdf_xml)) {
+            status_message_ = "Failed to parse URDF into urdf::Model";
+            return false;
+        }
+
+        // ===============================
+        // 3. URDF → KDL::Tree
+        // ===============================
+        KDL::Tree kdl_tree;
+        if (!kdl_parser::treeFromUrdfModel(urdf_model, kdl_tree)) {
+            status_message_ = "Failed to convert URDF to KDL::Tree";
+            return false;
+        }
+
+        // ===============================
+        // 4. KDL::Tree → KDL::Chain
+        // ===============================
+        KDL::Chain kdl_chain;
+        if (!kdl_tree.getChain(base_link, tip_link, kdl_chain)) {
+            status_message_ = "Failed to extract KDL::Chain from " +
+                            base_link + " to " + tip_link;
+            return false;
+        }
+
+        // ===============================
+        // 5. 设置 Chain
+        // ===============================
+        setChain(kdl_chain);
+
+        // ===============================
+        // 6. 读取 joint limit（顺序必须和 Chain 一致）
+        // ===============================
+        size_t nj = kdl_chain.getNrOfJoints();
+        joint_limits_.resize(nj);
+
+        size_t joint_idx = 0;
+        for (unsigned int i = 0; i < kdl_chain.getNrOfSegments(); ++i) {
+            const KDL::Segment& seg = kdl_chain.getSegment(i);
+            const KDL::Joint& joint = seg.getJoint();
+
+            if (joint.getType() == KDL::Joint::None) {
+                continue;
+            }
+
+            const std::string& joint_name = joint.getName();
+
+            auto urdf_joint = urdf_model.getJoint(joint_name);
+            if (!urdf_joint) {
+                status_message_ = "Joint not found in URDF: " + joint_name;
+                return false;
+            }
+
+            if (urdf_joint->limits) {
+                joint_limits_.min_positions[joint_idx] = urdf_joint->limits->lower;
+                joint_limits_.max_positions[joint_idx] = urdf_joint->limits->upper;
+
+                joint_limits_.max_velocities[joint_idx] = urdf_joint->limits->velocity;
+                joint_limits_.min_velocities[joint_idx] = -urdf_joint->limits->velocity;
+            } else {
+                // 如果 URDF 没写 limit，给默认值
+                joint_limits_.min_positions[joint_idx] = -PI;
+                joint_limits_.max_positions[joint_idx] = PI;
+            }
+
+            joint_idx++;
+        }
+
+        // ===============================
+        // 7. 初始化求解器 & 内存
+        // ===============================
+        initSolvers();
+        preallocateMemory();
+
+        is_initialized_.store(true);
+        status_message_ = "URDF loaded successfully";
+
+        return true;
     }
 
     void RobotArmKinematics::setChain(const KDL::Chain& chain){
@@ -196,6 +304,70 @@ namespace RobotKinematicsKDL{
         EndEffectorPose pose = computeForwardKinematics(joint_positions);
         return pose.toHomogeneousMatrix();
     }
+
+
+    // ============================================================
+    // 逆向运动学
+    // ============================================================
+
+    bool RobotArmKinematics::inverseKinematics(
+        const EndEffectorPose& target_pose,
+        const Eigen::VectorXd& initial_guess,
+        Eigen::VectorXd& solution)
+    {
+        if (!is_initialized_) return false;
+
+        try {
+            solution = inverseKinematics(target_pose, initial_guess);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    Eigen::VectorXd RobotArmKinematics::inverseKinematics(
+        const EndEffectorPose& target_pose,
+        const Eigen::VectorXd& initial_guess)
+    {
+        validateInput(initial_guess, "inverseKinematics");
+        checkFinite(initial_guess, "inverseKinematics.initial_guess");
+
+        KDL::Frame target_frame = toKDLFrame(target_pose);
+
+        // Eigen → KDL
+        for (size_t i = 0; i < num_joints_; ++i) {
+            kdl_joint_positions_(i) = initial_guess(i);
+        }
+
+        KDL::JntArray result(num_joints_);
+
+        int ret = ik_pos_solver_->CartToJnt(
+            kdl_joint_positions_,
+            target_frame,
+            result
+        );
+
+        if (ret < 0) {
+            throw KinematicSolverException(ret, "ChainIkSolverPos_NR");
+        }
+
+        // KDL → Eigen
+        Eigen::VectorXd q(num_joints_);
+        for (size_t i = 0; i < num_joints_; ++i) {
+            q(i) = result(i);
+        }
+
+        // 关节限位检查
+        if (config_.enable_joint_limit_check) {
+            validateJointLimits(q);
+        }
+
+        checkFinite(q, "inverseKinematics.result");
+
+        return q;
+    }
+
+
 
 
     // ============================================================
