@@ -27,7 +27,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 include_directories(
     include/control_pack
     ${EIGEN3_INCLUDE_DIRS}
-    &{orocos_kdl_INCLUDE_DIRS}
+    ${orocos_kdl_INCLUDE_DIRS}
 )
 
 add_executable(${PROJECT_NAME} src/robot_kinematics_kdl.cpp)
@@ -44,6 +44,7 @@ ament_target_dependencies(${PROJECT_NAME}
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
   set(ament_cmake_copyright_FOUND TRUE)
@@ -52,6 +53,11 @@ if(BUILD_TESTING)
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  ament_add_gtest(test_joint_limits test/test_joint_limits.cpp)
+  if(TARGET test_joint_limits)
+    target_include_directories(test_joint_limits PRIVATE include/control_pack)
+  endif()
 endif()
 
 ament_package()

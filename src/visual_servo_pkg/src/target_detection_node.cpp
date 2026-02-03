@@ -68,6 +68,10 @@ public:
         fy_ = 525.0;  // 焦距
         cx_ = 319.5;  // 主点x
         cy_ = 239.5;  // 主点y
+        depth_min_ = depth_min;
+        depth_max_ = depth_max;
+        target_radius_ = target_radius;
+        camera_frame_ = camera_frame;
         
         RCLCPP_INFO(this->get_logger(), "目标检测节点初始化完成");
         RCLCPP_INFO(this->get_logger(), "深度范围: %.2f - %.2f m", depth_min, depth_max);
@@ -127,7 +131,7 @@ private:
         
         // 深度阈值分割
         cv::Mat depth_mask;
-        cv::inRange(depth_image, cv::Scalar(0.1), cv::Scalar(5.0), depth_mask);
+        cv::inRange(depth_image, cv::Scalar(depth_min_), cv::Scalar(depth_max_), depth_mask);
         
         // 形态学处理
         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
@@ -165,7 +169,7 @@ private:
             float depth_value = depth_image.at<float>(center_y, center_x);
             
             // 检查深度值有效性
-            if (depth_value > 0.1 && depth_value < 5.0) {
+            if (depth_value > depth_min_ && depth_value < depth_max_) {
                 // 计算三维坐标
                 float world_x = (center_x - cx_) * depth_value / fx_;
                 float world_y = (center_y - cy_) * depth_value / fy_;
@@ -222,6 +226,9 @@ private:
     
     // 相机内参
     double fx_, fy_, cx_, cy_;
+    double depth_min_;
+    double depth_max_;
+    double target_radius_;
     std::string camera_frame_;
 };
 

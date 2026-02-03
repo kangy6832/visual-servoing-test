@@ -56,8 +56,8 @@ namespace RobotKinematicsKDL{
         }
 
         fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(*chain_); // 正运动学位置求解器
-        jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_); // 雅克比矩阵求解器
-        jacobian_dot_solver_ = std::make_unique<KDL::ChainJntToJacDotSolver>(*chain_); // 雅克比矩阵导数求解器
+        jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_); // 雅可比矩阵求解器
+        jacobian_dot_solver_ = std::make_unique<KDL::ChainJntToJacDotSolver>(*chain_); // 雅可比矩阵导数求解器
 
         ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(*chain_);
 
@@ -646,6 +646,4 @@ namespace RobotKinematicsKDL{
         return std::sqrt(jjt.determinant());
     }
 } // namespace RobotKinematicsKDL
-
-
 
