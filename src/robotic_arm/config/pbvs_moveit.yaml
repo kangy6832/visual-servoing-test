@@ -1,0 +1,10 @@
+pbvs_moveit_node:
+  ros__parameters:
+    joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    planner_id: "RRTConnectkConfigDefault"
+    planning_time: 5.0
+    pbvs:
+      linear_gain: 0.6
+      angular_gain: 0.8
+      linear_limit: 0.2
+      angular_limit: 0.5
