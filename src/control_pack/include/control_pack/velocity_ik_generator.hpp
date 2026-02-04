@@ -227,7 +227,7 @@ namespace RobotKinematicsKDL {
      */
     struct CartesianTwist {
         Eigen::Vector3d linear;  // 线速度 （vx, vy, vz) [m/s]
-        Eigen::Vector3d angular ;  // 角速度 (wx, wy, wz) [rad/s]
+        Eigen::Vector3d angular;  // 角速度 (wx, wy, wz) [rad/s]
 
         CartesianTwist() : linear(Eigen::Vector3d::Zero()), angular(Eigen::Vector3d::Zero()) {}
 
@@ -314,7 +314,7 @@ namespace RobotKinematicsKDL {
 
         Eigen::Matrix4d toHomogeneousMatrix() const {  // 4×4 齐次变换矩阵
             Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-            T.block<3, 3>(0, 0) = orientation.toRotationMatrix();  // 四元是转旋转矩阵
+            T.block<3, 3>(0, 0) = orientation.toRotationMatrix();  // 四元数转旋转矩阵
             T.block<3, 1>(0, 3) = position;
             return T;
         }

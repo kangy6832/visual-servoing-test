@@ -7,13 +7,13 @@
 #include <Eigen/Dense>
 
 /**
- * @brief 机器人关节轨迹跟随的Ation接口
+ * @brief 机器人关节轨迹跟随的Action接口
  * 
  * FollowJointTrajectory_Goal - 目标轨迹（关节位置、速度、加速度序列）
  * FollowJointTrajectory_Result - 执行结果（成功/失败状态）
  * FollowJointTrajectory_Feedback - 执行反馈（当前状态、剩余时间等）
  */
-#include <control_msgs/action/follow_joint_trajectory.hpp> 
+#include <control_msgs/action/follow_joint_trajectory.hpp>
 
 /**
  * @brief 控制器接口基类
@@ -34,7 +34,7 @@
 #include <hardware_interface/loaned_command_interface.hpp>
 
 /**
- * @brief 硬件状态接受接口
+ * @brief 硬件状态接收接口
  */
 #include <hardware_interface/loaned_state_interface.hpp>
 
@@ -124,7 +124,7 @@ namespace VisualServoingController{
             /**
              * @brief Active->Inactive
              * @param 生命周期状态
-             * @return successful
+             * @return 成功
              */
             controller_interface::CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
 
@@ -183,4 +183,4 @@ namespace VisualServoingController{
 } // namespace VisualServoingController
 
 
-#endif //  !VISUAL_SERVOING_CONTROLLER_HPP
+#endif // !VISUAL_SERVOING_CONTROLLER_HPP
