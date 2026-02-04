@@ -83,6 +83,7 @@ ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
   # the following line skips the linter which checks for copyrights
   # comment the line when a copyright and license is added to all source files
   set(ament_cmake_copyright_FOUND TRUE)
@@ -91,6 +92,11 @@ if(BUILD_TESTING)
   # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  ament_add_gtest(test_joint_limits test/test_joint_limits.cpp)
+  if(TARGET test_joint_limits)
+    target_include_directories(test_joint_limits PRIVATE include/control_pack)
+  endif()
 endif()
 
 ament_package()

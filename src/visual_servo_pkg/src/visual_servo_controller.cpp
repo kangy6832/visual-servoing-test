@@ -117,7 +117,7 @@ private:
         geometry_msgs::msg::Twist cmd_vel;
         
         try {
-            // 将目标点转换到里程计坐标系
+            // 将目标点转换到机器人基座坐标系（base_link）
             geometry_msgs::msg::PointStamped target_in_base;
             tf_buffer_->transform(*latest_target_, target_in_base, "base_link",
                                  tf2::Duration(std::chrono::milliseconds(100)));
