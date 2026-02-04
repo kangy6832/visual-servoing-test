@@ -8,20 +8,9 @@
 #define ROBOT_POSE_POLYOMIAL_HPP
 
 #include <Eigen/Dense>
-#include <joint_trajectory_controller/interpolation_methods.hpp>
-#include <kdl/chain.hpp>
-#include <kdl/chaindynparam.hpp>
-#include <kdl/chainfksolverpos_recursive.hpp>
-#include <kdl/frames.hpp>
-#include <kdl/jntarray.hpp>
-#include <kdl/tree.hpp>
-#include <kdl_parser/kdl_parser.hpp>
-#include <memory>
-#include <rclcpp/logging.hpp>
-#include <rclcpp_action/rclcpp_action.hpp>
-#include <string>
-#include <vector>
+#include <rclcpp/time.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
+#include <vector>
 
 namespace RobotPosePolynomial{
     /**
@@ -80,6 +69,7 @@ namespace RobotPosePolynomial{
             double d{0.0};
             double e{0.0};
             double f{0.0};
+            
             double t0{0.0};
             double t1{0.0};
 
@@ -123,28 +113,11 @@ namespace RobotPosePolynomial{
             void set_trajectory(const trajectory_msgs::msg::JointTrajectory& trajectory);
             
         private:
-            /**
-             * @brief 关节轨迹参数
-             */
             QuinticParam line[6];
-
-            /**
-             * @brief 当前执行到第几段轨迹
-             * @details 当前正在用 points[cur_index] 到 points[cur_index + 1] 插值
-             */
             size_t cur_index;
-
-            /**
-             * @brief 轨迹开始的零时刻
-             */
             rclcpp::Time start_time;
-
-            /**
-             * @brief ROS2标准关节轨迹
-             */
             trajectory_msgs::msg::JointTrajectory trajectory;
-
-            bool inititialized_{false};
+            bool initialized_{false};
 
             void init_segment(std::size_t index);
     };

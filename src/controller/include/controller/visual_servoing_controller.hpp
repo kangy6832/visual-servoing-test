@@ -153,10 +153,28 @@ namespace VisualServoingController{
             rclcpp::Subscription<Robot>::SharedPtr target_subscriber_;
             std::vector<std::string> joints_name_;
 
-            robot_interfaces::msg::Robot joints_target_positons_;
-            robot_interfaces::msg::Robot joints_target_velocity_;
-            robot_interfaces::msg::Robot joints_target_acceleration_;
+            robot_interfaces::msg::Robot joints_target;
 
+            rclcpp_action::Server<control_msgs::action::FollowJointTrajectory>::SharedPtr trajectory_action_server_;
+
+            control_msgs::action::FollowJointTrajectory::Result::SharedPtr result_msg;
+            control_msgs::action::FollowJointTrajectory::Feedback::SharedPtr feedback_msg;
+            KDL::JntArray q_kdl, dq_kdl, ddq_kdl;
+            KDL::JntSpaceInertiaMatrix M_kdl;
+            
+
+
+
+            rclcpp_action::GoalResponse handle_goal(
+                const rclcpp_action::GoalUUID& uuid, 
+                const std::shared_ptr<const control_msgs::action::FollowJointTrajectory::Goal> goal
+            );
+            rclcpp_action::CancelResponse handle_cancel(
+                const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle
+            );
+            void handle_accepted(
+                const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle
+            );
     };
 
 

@@ -24,23 +24,62 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)    
 
-include_directories(
-    include/control_pack
-    ${EIGEN3_INCLUDE_DIRS}
-    &{orocos_kdl_INCLUDE_DIRS}
+# 构建库（而非可执行文件）
+add_library(${PROJECT_NAME} 
+    src/robot_pose_polynomial.cpp
+    src/velocity_ik_generator.cpp
+    src/trajectory_executor.cpp
 )
 
-add_executable(${PROJECT_NAME} src/robot_kinematics_kdl.cpp)
-
-install(TARGETS control_pack 
-    DESTINATION lib/${PROJECT_NAME}
+# 设置包含目录
+target_include_directories(${PROJECT_NAME}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${EIGEN3_INCLUDE_DIRS}
+        ${orocos_kdl_INCLUDE_DIRS}
 )
 
+# 目标依赖
 ament_target_dependencies(${PROJECT_NAME} 
-  rclcpp
-  eigen_cmake_module
-  orocos_kdl  
+    rclcpp
+    rclcpp_action
+    eigen_cmake_module
+    orocos_kdl
+    kdl_parser
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
 )
+
+# 安装目标
+install(TARGETS ${PROJECT_NAME}
+    EXPORT export_${PROJECT_NAME}
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+# 安装头文件
+install(DIRECTORY include/
+    DESTINATION include
+)
+
+# 导出目标
+ament_export_dependencies(
+    rclcpp
+    rclcpp_action
+    eigen_cmake_module
+    orocos_kdl
+    kdl_parser
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+)
+
+ament_export_targets(${PROJECT_NAME} HAS_LIBRARY_DESCRIPTION)
+ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

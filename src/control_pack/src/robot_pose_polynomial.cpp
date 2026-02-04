@@ -1,11 +1,7 @@
 
 
 #include "control_pack/robot_pose_polynomial.hpp"
-#include <Eigen/src/Core/Matrix.h>
 #include <chrono>
-#include <memory>
-#include <rclcpp/time.hpp>
-#include <rclcpp_action/rclcpp_action.hpp>
 
 
 
@@ -356,9 +352,9 @@ namespace RobotPosePolynomial{
          * 第一次进入时，显式初始化第一段轨迹
          * 防止第一段未初始化就被使用
          */
-        if(!inititialized_){
+        if(!initialized_){
                 init_segment(0);
-                inititialized_ = true;
+                initialized_ = true;
             }
 
 
@@ -418,7 +414,7 @@ namespace RobotPosePolynomial{
     void ContinuousTrajectory::start_track(rclcpp::Time now){
         this->start_time = std::move(now);
         cur_index = 0;
-        inititialized_ = false; // 必须清空，避免复用上一次轨迹段
+        initialized_ = false; // 必须清空，避免复用上一次轨迹段
     }
 
 
@@ -442,4 +438,4 @@ namespace RobotPosePolynomial{
 
 
 
-} // namespace RobotPosePolynomail
+} // namespace RobotPosePolynomial
