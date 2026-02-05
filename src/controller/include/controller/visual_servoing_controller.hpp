@@ -176,10 +176,6 @@ namespace VisualServoingController{
                 const std::shared_ptr<rclcpp_action::ServerGoalHandle<control_msgs::action::FollowJointTrajectory>> goal_handle
             );
     };
-
-
-    
-
 } // namespace VisualServoingController
 
 
