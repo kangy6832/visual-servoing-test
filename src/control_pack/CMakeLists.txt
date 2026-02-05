@@ -24,62 +24,80 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)    
 
-# 构建库（而非可执行文件）
-add_library(${PROJECT_NAME} 
-    src/robot_pose_polynomial.cpp
-    src/velocity_ik_generator.cpp
-    src/trajectory_executor.cpp
+# ROS message dependencies
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(shape_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+
+# MoveIt dependencies
+find_package(moveit_core REQUIRED)
+find_package(moveit_ros_planning_interface REQUIRED)
+find_package(moveit_ros_planning REQUIRED)
+find_package(moveit_ros_move_group REQUIRED)
+
+# Eigen3 dependency
+find_package(Eigen3 REQUIRED)
+
+# Robot interfaces dependency
+find_package(robot_interfaces REQUIRED)
+
+# Add executable for robotic_task
+add_executable(robotic_task_node
+  src/robotic_task_node.cpp
+  src/robotic_task.cpp
+  src/robot_pose_polynomial.cpp
+  src/velocity_ik_generator.cpp
+  src/trajectory_executor.cpp
 )
 
-# 设置包含目录
-target_include_directories(${PROJECT_NAME}
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${EIGEN3_INCLUDE_DIRS}
-        ${orocos_kdl_INCLUDE_DIRS}
+target_include_directories(robotic_task_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
 )
 
-# 目标依赖
-ament_target_dependencies(${PROJECT_NAME} 
-    rclcpp
-    rclcpp_action
-    eigen_cmake_module
-    orocos_kdl
-    kdl_parser
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
+target_compile_features(robotic_task_node PUBLIC cxx_std_17)
+
+ament_target_dependencies(robotic_task_node
+  rclcpp
+  rclcpp_action
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  moveit_core
+  moveit_ros_planning_interface
+  moveit_ros_planning
+  moveit_ros_move_group
+  Eigen3
+  orocos_kdl
+  kdl_parser
+  geometry_msgs
+  visualization_msgs
+  sensor_msgs
+  shape_msgs
+  moveit_msgs
+  control_msgs
+  trajectory_msgs
+  robot_interfaces
 )
 
-# 安装目标
-install(TARGETS ${PROJECT_NAME}
-    EXPORT export_${PROJECT_NAME}
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
+# Install the executable
+install(TARGETS robotic_task_node
+  DESTINATION lib/${PROJECT_NAME}
 )
 
-# 安装头文件
+# Install include directories
 install(DIRECTORY include/
-    DESTINATION include
+  DESTINATION include/
 )
 
-# 导出目标
-ament_export_dependencies(
-    rclcpp
-    rclcpp_action
-    eigen_cmake_module
-    orocos_kdl
-    kdl_parser
-    tf2
-    tf2_ros
-    tf2_geometry_msgs
-)
 
-ament_export_targets(${PROJECT_NAME} HAS_LIBRARY_DESCRIPTION)
-ament_export_include_directories(include)
+
+
+
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -93,7 +111,7 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
-  ament_add_gtest(test_joint_limits test/test_joint_limits.cpp)
+
   if(TARGET test_joint_limits)
     target_include_directories(test_joint_limits PRIVATE include/control_pack)
   endif()

@@ -1,0 +1,24 @@
+# build artifacts
+build/
+build-*/
+install/
+devel/
+log/
+
+# ROS / colcon / catkin
+.catkin_tools/
+colcon-*
+
+# 依赖 / 第三方
+external/
+third_party/
+vendor/
+
+# 大型目录
+node_modules/
+.vscode/
+.idea/
+
+# Git
+.git/
+

@@ -7,6 +7,10 @@
   <maintainer email="kangyangyi@hotmail.com">kyy</maintainer>
   <license>TODO: License declaration</license>
 
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>builtin_interfaces</depend>
   <depend>geometry_msgs</depend>
@@ -18,8 +22,7 @@
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 
-  <member_of_group>ament_lint_auto</member_of_group>
-  <member_of_group>ament_lint_common</member_of_group>
+
 
   <export>
     <build_type>ament_cmake</build_type>

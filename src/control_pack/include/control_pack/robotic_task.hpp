@@ -154,6 +154,58 @@ namespace robotic_task {
             int count;
             const int MAX_COUNT = 100;
 
+            // 五次多项式接口
+            RobotPosePolynomial::QuinticParam Quintic;
+            RobotPosePolynomial::ContinuousTrajectory Trajectory;
+
+            // 速度逆解器
+            RobotKinematicsKDL::RobotArmKinematics robot_kinematics;
+
+            // 末端速度
+            Eigen::Vector3d end_effector_velocity;
+
+            // 根据目标坐标构建末端速度向量
+            Eigen::Vector3d calculate_end_effector_velocity(
+                double x, 
+                double y, 
+                double z
+            ) : end_effector_velocity(x, y, z) {};
+
+            // 根据末端速度计算关节速度
+            Eigen::VectorXd calculate_joint_velocity(
+                const Eigen::Vector3d& end_effector_velocity
+            ) const;
+
+            // 根据末端速度计算关节加速度
+            Eigen::VectorXd calculate_joint_acceleration(
+                const Eigen::Vector3d& end_effector_velocity, 
+                const Eigen::VectorXd& joint_velocity
+            ) const;
+
+            
+            /**
+             * @brief 关节位置（关节角）
+             * 
+             * 最开始，关节位置为零，即各关节的角度为0°。
+             * 后，使用 get_joint_position() 获取上次规划后的关节位置，并作为当前的关节位置。
+             * 这样，在规划过程中，关节位置会不断更新，直到达到目标位置。
+             */
+            Eigen::VectorXd joint_position;
+            // 获取关节位置
+            Eigen::VectorXd get_joint_position() const;
+
+            // 实现关节位置的实时更新
+            rclcpp::Subscription<robot_interfaces::msg::Robot>::SharedPtr joint_state_subscriber_;
+            void jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg);
+
+
+
+
+
+
+
+            
+            
 
 
             

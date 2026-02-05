@@ -39,6 +39,9 @@ using namespace std::chrono_literals;
 using namespace robotic_task;
 
 RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
+    // 初始化关节位置为6维零向量（假设6关节机器人）
+    joint_position = Eigen::VectorXd::Zero(6);
+    
     param_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
     arm_handle_server = rclcpp::action::create_server<robot_interafces::action::Catch>(node, "robotic_task", 
         std::bind(&RoboticTask::handle_goal, this, std::placeholders::_1, std::placeholders::_2), 
@@ -51,6 +54,11 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
     psi = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
+
+    joint_state_subscriber_ = node->create_subscription<robot_interfaces::msg::Robot>(
+        
+    )
+
     node->create_wall_timer
     (
         100ms, 
@@ -528,5 +536,25 @@ bool RoboticTask::set_air_pump(bool enable){
         return false;
     }
 }
+
+// 获取关节位置
+Eigen::VectorXd RoboticTask::get_joint_position() const {
+    return joint_position;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

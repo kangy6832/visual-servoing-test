@@ -19,7 +19,8 @@ find_package(action_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME} 
  "msg/Joint.msg"
  "msg/Robot.msg"
- "msg/Image.msg"
+ "msg/VisualImage.msg"
+ "action/Catch.action"
  DEPENDENCIES builtin_interfaces geometry_msgs std_msgs action_msgs  
 )
 

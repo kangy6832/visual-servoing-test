@@ -38,7 +38,7 @@
 
         result_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Result>();
         feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
-        joints_name_ = {"joint0", "joint1", "joint2", "joint3", "joint4", "joint5"};
+        joints_name_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
 
         return controller_interface::CallbackReturn::SUCCESS;
     }
