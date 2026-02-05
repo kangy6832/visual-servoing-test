@@ -4,7 +4,7 @@
  * @date 2026-1-31
  */
 
- #include "visual_servoing_controller.hpp"
+ #include "controller/visual_servoing_controller.hpp"
  #include "robot_interfaces/msg/robot.hpp"
  #include <controller_interface/controller_interface.hpp>
 
@@ -40,6 +40,7 @@
         feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
         joints_name_ = {"joint0", "joint1", "joint2", "joint3", "joint4", "joint5"};
 
+        return controller_interface::CallbackReturn::SUCCESS;
     }
 
     controller_interface::CallbackReturn Controller::on_configure(const rclcpp_lifecycle::State& previous_state){
@@ -58,6 +59,9 @@
     }
 
     controller_interface::return_type Controller::update(const rclcpp::Time& time, const rclcpp::Duration& period){
+        (void)time;
+        (void)period;
+        
         auto joints_num = joints_name_.size();
         robot_interfaces::msg::Robot state_msg;
 
@@ -76,6 +80,7 @@
             command_interfaces_[i * 3 + 2].set_value((double)joints_target.joints[i].torque);
         }
 
+        return controller_interface::return_type::OK;
     }
 
     controller_interface::InterfaceConfiguration Controller::command_interface_configuration() const {
