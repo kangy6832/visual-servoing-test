@@ -23,7 +23,7 @@ namespace RobotPosePolynomial{
             /**
              * @brief 构造函数
              */
-            QuinticParam();
+            QuinticParam() = default;
 
             /**
              * @brief 设置五次多项式的参数

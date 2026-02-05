@@ -48,7 +48,7 @@ namespace motion_generator{
         Eigen::VectorXd ddq;   // desired accelerations
 
         DesiredState() = default;
-    }
+    };
 
     /**
      * @brief 控制模式（由 generator 指定，controller 依据此决定使用 positions/velocity 接口）

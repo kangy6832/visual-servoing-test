@@ -16,8 +16,8 @@
 #include <tf2_ros/transform_listener.hpp> 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp> 
 #include <geometry_msgs/msg/pose.hpp> 
-#include <robot_interfaces/msg/arm.hpp> 
-#include <moveit/move_group_interface/move_group_interface.h> 
+#include <robot_interfaces/msg/robot.hpp> 
+#include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h> 
 #include <moveit_msgs/msg/collision_object.h> 
 #include <moveit/utils/moveit_error_code.h> 
@@ -104,11 +104,11 @@ namespace robotic_task {
                 const rclcpp_action::GoalUUID& uuid, 
                 std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal
             );
-            rclcpp_action::GoalResponse cancel_goal(
-                const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle
+            rclcpp_action::CancelResponse cancel_goal(
+                const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
             void handle_accepted(
-                const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> goal_handle
+                const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
 
             void arm_catch_task_handle();
@@ -129,6 +129,12 @@ namespace robotic_task {
 
             const double VELOCITY_SCALING = 0.4;
             const double ACCELERATION_SCALING = 0.3;
+
+            enum class ApproachMode {
+                AUTO, 
+                POS
+            };
+
         
             geometry_msgs::msg::Pose calculate_target_pose(
                 const geometry_msgs::msg::Pose& box_pos, 
@@ -137,11 +143,6 @@ namespace robotic_task {
                 ApproachMode mode 
             );
 
-            enum class ApproachMode{
-                AUTO = 0,
-                TOP, 
-                SIDE_ROBOT
-            };
 
             geometry_msgs::msg::Pose calculate_prepare_pose_with_orientation(
                 const geometry_msgs::msg::Pose& box_pos, 
@@ -165,11 +166,13 @@ namespace robotic_task {
             Eigen::Vector3d end_effector_velocity;
 
             // 根据目标坐标构建末端速度向量
-            Eigen::Vector3d calculate_end_effector_velocity(
+            void calculate_end_effector_velocity(
                 double x, 
                 double y, 
                 double z
-            ) : end_effector_velocity(x, y, z) {};
+            ) {
+                end_effector_velocity = Eigen::Vector3d(x, y, z);
+            }
 
             // 根据末端速度计算关节速度
             Eigen::VectorXd calculate_joint_velocity(

@@ -7,6 +7,7 @@
 #include "control_pack/velocity_ik_generator.hpp"
 #include <sstream>
 #include <iomanip>
+#include <Eigen/Sparse>
 #include <Eigen/src/IterativeLinearSolvers/IterativeSolverBase.h>
 
 

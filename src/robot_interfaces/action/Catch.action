@@ -1,5 +1,10 @@
-float32 q
+int32 action_type
+geometry_msgs/Pose target_pose
 ---
-float32 success
+bool success
+string reason
+int32 kfs_num
 ---
-float32 q_des
+
+int32 current_state
+string state_describe
