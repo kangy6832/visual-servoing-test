@@ -82,6 +82,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <string>
+#include <thread>
 
 /**
  * @brief 关节轨迹消息
