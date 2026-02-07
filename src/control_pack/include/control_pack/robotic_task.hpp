@@ -88,8 +88,10 @@ namespace robotic_task {
 
 
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
+            std::unique_ptr<tf2_ros::Buffer> link5_point_tf_buffer;
             std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener_;
             geometry_msgs::msg::TransformStamped camera_link0_tf;
+            std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
 
 
             std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
@@ -202,7 +204,8 @@ namespace robotic_task {
             void jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg);
 
 
-
+            // ROS2 的末端速度表示
+            geometry_msgs::msg::Twist 
 
 
 
