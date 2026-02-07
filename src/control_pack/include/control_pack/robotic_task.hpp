@@ -66,6 +66,12 @@ namespace robotic_task {
             };
         
         private:
+
+            enum class ApproachMode {
+                AUTO, 
+                POS
+            };
+
             bool success;
             rclcpp::Node::SharedPtr node;
             
@@ -88,9 +94,11 @@ namespace robotic_task {
 
 
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
+            std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_lisenter_;
             std::unique_ptr<tf2_ros::Buffer> link5_point_tf_buffer;
-            std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_listener_;
+            std::shared_ptr<tf2_ros::TransformListener> link5_point_tf_lisenter_;
             geometry_msgs::msg::TransformStamped camera_link0_tf;
+            geometry_msgs::msg::TransformStamped link5_point_tf;
             std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
 
 
@@ -132,11 +140,6 @@ namespace robotic_task {
             const double VELOCITY_SCALING = 0.4;
             const double ACCELERATION_SCALING = 0.3;
 
-            enum class ApproachMode {
-                AUTO, 
-                POS
-            };
-
         
             geometry_msgs::msg::Pose calculate_target_pose(
                 const geometry_msgs::msg::Pose& box_pos, 
@@ -157,6 +160,7 @@ namespace robotic_task {
             int count;
             const int MAX_COUNT = 100;
 
+            // ======================================= 头文件接口 =======================================
             // 五次多项式接口
             RobotPosePolynomial::QuinticParam Quintic;
             RobotPosePolynomial::ContinuousTrajectory Trajectory;
@@ -196,6 +200,7 @@ namespace robotic_task {
              * 这样，在规划过程中，关节位置会不断更新，直到达到目标位置。
              */
             Eigen::VectorXd joint_position;
+            Eigen::VectorXd temp_joint_position; // 临时关节位置
             // 获取关节位置
             Eigen::VectorXd get_joint_position() const;
 
@@ -205,7 +210,15 @@ namespace robotic_task {
 
 
             // ROS2 的末端速度表示
-            geometry_msgs::msg::Twist 
+            geometry_msgs::msg::Twist ros2_end_effector_velocity;
+            // ROS2 的末端速度发布器
+            rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_pub;
+
+            // ROS2 的末端速度订阅器
+            rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_sub;
+            void ros2EndEffectorVelocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+
+            rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server; 
 
 
 
