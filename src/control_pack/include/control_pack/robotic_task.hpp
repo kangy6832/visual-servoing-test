@@ -87,6 +87,7 @@ namespace robotic_task {
             std::atomic<bool> is_running_arm_task{false};
             std::atomic<bool> current_task_type{0}; // 任务类型
             std::atomic<int> current_kfs_num{0};
+            std::atomic<bool> cancle_current_task{false};
             
 
 
@@ -100,6 +101,8 @@ namespace robotic_task {
             geometry_msgs::msg::TransformStamped camera_link0_tf;
             geometry_msgs::msg::TransformStamped link5_point_tf;
             std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
+            std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+            std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
 
             std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;

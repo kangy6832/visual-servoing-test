@@ -1,6 +1,6 @@
 #include "control_pack/robotic_task.hpp"
-#include "robot_pose_polynomial.hpp"
-#include "velocity_ik_generator.hpp"
+#include "control_pack/robot_pose_polynomial.hpp"
+#include "control_pack/velocity_ik_generator.hpp"
 
 #include "geometry_msgs/msg/pose.hpp"
 #include "moveit_msgs/msg/attached_collision_object.hpp"
@@ -13,13 +13,18 @@
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <geometry_msgs/msg/detail/vector3__struct.hpp>
 #include <memory>
+#include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/utils/moveit_error_code.h>
+#include <moveit_msgs/msg/detail/collision_object__struct.hpp>
 #include <moveit_msgs/msg/detail/constraints__struct.hpp>
 #include <moveit_msgs/msg/detail/robot_trajectory__struct.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/parameter.hpp>
 #include <rclcpp/parameter_client.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <rclcpp/utilities.hpp>
+#include <robot_interfaces/action/detail/catch__struct.hpp>
+#include <shape_msgs/msg/detail/solid_primitive__struct.hpp>
 #include <string>
 #include <tf2/LinearMath/Quaternion.hpp>
 #include <tf2_ros/transform_listener.hpp>
@@ -59,8 +64,9 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
 
     joint_state_subscriber_ = node->create_subscription<robot_interfaces::msg::Robot>(
-        
-    )
+        "joint_states", 10,
+        std::bind(&RoboticTask::jointStateCallback, this, std::placeholders::_1)
+    );
 
     node->create_wall_timer
     (
@@ -180,7 +186,7 @@ rclcpp_action::CancelResponse RoboticTask::cancel_goal(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle 
 ){
     (void)goal_handle;
-    cancel_current_task = true;
+    cancle_current_task = true;
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
         is_running_arm_task = false;
@@ -191,6 +197,84 @@ rclcpp_action::CancelResponse RoboticTask::cancel_goal(
     set_air_pump(false);
 
     return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void robotic_task::RoboticTask::handle_accepted(
+    const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
+){
+    current_goal_handle = goal_handle;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        is_running_arm_task = true;
+    }
+    cancle_current_task = false;
+
+    task_mutex_.lock();
+    has_new_task_ = true;
+    task_mutex_.unlock();
+    task_cv_.notify_one();
+
+}
+
+void robotic_task::RoboticTask::arm_catch_task_handle(){
+    RCLCPP_INFO(node->get_logger(), "进入机械臂任务处理线程");
+    bool first_run = true;
+
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    bool continue_flag = false;
+
+    auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
+    auto finish_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
+
+    std::this_thread::sleep_for(5s);
+    {
+        // 添加抬升装置障碍
+        moveit_msgs::msg::CollisionObject collision_object;
+        collision_object.header.frame_id = move_group_interface->getPlanningFrame();
+        collision_object.id = "instituion";
+        collision_object.primitives.resize(4);
+        collision_object.primitive_poses.resize(4);
+
+        collision_object.primitive_poses[0].orientation.w = 1.0;
+        collision_object.primitive_poses[1].orientation.w = 1.0;
+        collision_object.primitive_poses[2].orientation.w = 1.0;
+        collision_object.primitive_poses[3].orientation.w = 1.0;
+
+        collision_object.primitive_poses[0].position.x = -0.60;
+        collision_object.primitive_poses[0].position.y = 0.35;
+        collision_object.primitive_poses[0].position.z = 0.3;
+
+        collision_object.primitive_poses[1].position.x = 0.05;
+        collision_object.primitive_poses[1].position.y = 0.35;
+        collision_object.primitive_poses[1].position.z = 0.3;
+
+        collision_object.primitive_poses[2].position.x = -0.60;
+        collision_object.primitive_poses[2].position.y = -0.35;
+        collision_object.primitive_poses[2].position.z = 0.3;
+
+        collision_object.primitive_poses[3].position.x = 0.05;
+        collision_object.primitive_poses[3].position.y = -0.35;
+        collision_object.primitive_poses[3].position.z = 0.3;
+
+        shape_msgs::msg::SolidPrimitive primitive;
+        collision_object.primitives[0].type = primitive.BOX;
+        collision_object.primitives[0].dimensions.resize(3);
+        collision_object.primitives[0].dimensions[primitive.BOX_X] = 0.06;
+        collision_object.primitives[0].dimensions[primitive.BOX_Y] = 0.06;
+        collision_object.primitives[0].dimensions[primitive.BOX_Z] = 0.6;
+        collision_object.primitives[3] = collision_object.primitives[2] = 
+        collision_object.primitives[1] = collision_object.primitives[0];
+        
+        collision_object.operation = moveit_msgs::msg::CollisionObject::ADD;
+        psi->applyCollisionObject(collision_object);
+    }
+
+    do{
+        move_group_interface->setStartStateToCurrentState();
+        move_group_interface->setGoal
+    }
+
+
 
 }
 
