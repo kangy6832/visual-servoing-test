@@ -126,6 +126,8 @@ namespace robotic_task {
                 const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
 
+            int count ; // 用于循环重试的数量表示
+
 
             void arm_catch_task_handle();
 

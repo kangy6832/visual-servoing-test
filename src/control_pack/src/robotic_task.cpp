@@ -1078,6 +1078,32 @@ bool RoboticTask::execute_place_task() {
 bool RoboticTask::handle_idle_state() {
     RCLCPP_INFO(node->get_logger(), "处理空闲状态");
     update_feedback();
+
+    // 设置关节角度
+    Eigen::VectorXd idle_joints(6);
+    idle_joints << 0.0, 0.8726646259971648, 2.1816615649929116, 2.2514747350725445, 0.0, 0.0;
+    std::vector<double> idle_joints_vec(idle_joints.data(), idle_joints.data() + idle_joints.size());
+    move_group_interface->setJointValueTarget(idle_joints_vec);
+
+    // 规划到空闲位置
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+    count = 0;
+
+    do {
+        error_code = move_group_interface->plan(plan);
+        count++;
+    } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
+
+    if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
+        RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+        return false;
+    }
+    do{
+        move_group_interface->execute(plan);
+    } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    
+
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     return true;
 }
