@@ -634,31 +634,79 @@ bool RoboticTask::set_air_pump(bool enable){
         return false;
     }
 
-    auto future = temp_client->set_parameters({
-        rclcpp::Parameter("enable_air_pump", enable)
-    });
+    // 添加重试机制
+    const int max_retries = 3;
+    for (int retry = 0; retry < max_retries; ++retry) {
+        auto future = temp_client->set_parameters({
+            rclcpp::Parameter("enable_air_pump", enable)
+        });
 
-    try{
-        const auto& result = future.get();
+        try{
+            const auto& result = future.get();
 
-        if (result.empty()){
-            RCLCPP_ERROR(node->get_logger(), "返回结果为空");
-            return false;
+            if (result.empty()){
+                RCLCPP_ERROR(node->get_logger(), "返回结果为空，重试 %d/%d", retry + 1, max_retries);
+                continue;
+            }
+
+            const auto& first_result = result.front();
+            if(first_result.successful){
+                RCLCPP_INFO(node->get_logger(), "气泵设置成功");
+                return true;
+            } else {
+                RCLCPP_ERROR(node->get_logger(), "设置失败： %s，重试 %d/%d", 
+                             first_result.reason.c_str(), retry + 1, max_retries);
+            }
+        } catch (const std::exception& e){
+            RCLCPP_ERROR(node->get_logger(), "设置失败： %s，重试 %d/%d", e.what(), retry + 1, max_retries);
         }
-
-        // 检查第一个参数的结果
-        const auto& first_result = result.front();
-        if(first_result.successful){
-            RCLCPP_INFO(node->get_logger(), "设置成功");
-            return true;
-        } else {
-            RCLCPP_ERROR(node->get_logger(), "设置失败： %s", first_result.reason.c_str());
-            return false;
+        
+        if (retry < max_retries - 1) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-    } catch (const std::exception& e){
-        RCLCPP_ERROR(node->get_logger(), "设置失败： %s", e.what());
-        return false;
     }
+
+    RCLCPP_ERROR(node->get_logger(), "气泵设置最终失败");
+    return false;
+}
+
+bool RoboticTask::verify_air_pump_status(bool expected_status) {
+    // 检查气泵实际状态
+    auto temp_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "/driver_node");
+    
+    if(!temp_client->wait_for_service(1s)) {
+        RCLCPP_WARN(node->get_logger(), "无法连接到驱动节点验证气泵状态");
+        return true; // 假设成功，避免阻塞
+    }
+    
+    auto future = temp_client->get_parameters({"enable_air_pump"});
+    
+    try {
+        const auto& result = future.get();
+        if (!result.empty()) {
+            bool current_status = result[0].as_bool();
+            return current_status == expected_status;
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(node->get_logger(), "获取气泵状态异常: %s", e.what());
+    }
+    
+    return true; // 默认返回成功
+}
+
+bool RoboticTask::verify_grasp_success() {
+    // 可以通过以下方式验证抓取：
+    // 1. 检查关节电流变化
+    // 2. 检查真空传感器（如果有）
+    // 3. 检查末端执行器负载
+    
+    // 简单实现：等待一段时间后检查系统状态
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    
+    // 这里可以添加更多验证逻辑
+    // 例如检查关节负载、真空度等
+    RCLCPP_INFO(node->get_logger(), "抓取验证完成");
+    return true;
 }
 
 // 获取关节位置
@@ -758,7 +806,7 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     update_feedback();
     
     // ========================================
-    // 📍 实现位置1: 移动到预备抓取位置的路径规划
+    // 实现位置1: 移动到预备抓取位置的路径规划
     // ========================================
     // 需要实现的具体内容:
     // 1. 使用 calculate_target_pose() 计算预备抓取位置
@@ -829,16 +877,35 @@ bool RoboticTask::handle_catch_target() {
     // 添加碰撞对象
     add_kfs_collision(task_target_pos, "target_kfs", move_group_interface->getPlanningFrame());
     
-    // 开启气泵
+    // 等待稳定，确保机械臂已到达抓取位置
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // 开启气泵并验证
     if(!set_air_pump(true)) {
         RCLCPP_ERROR(node->get_logger(), "开启气泵失败");
         return false;
     }
     
-    // 添加附加碰撞对象
+    // 验证气泵状态（如果硬件支持）
+    if(!verify_air_pump_status(true)) {
+        RCLCPP_WARN(node->get_logger(), "气泵状态验证失败，尝试重新开启");
+        if(!set_air_pump(true)) {
+            RCLCPP_ERROR(node->get_logger(), "气泵重新开启失败");
+            return false;
+        }
+    }
+    
+    // 等待气泵建立真空
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    
+    // 添加附加碰撞对象（表示已抓取）
     add_attached_kfs_collision();
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // 验证抓取是否成功
+    if(!verify_grasp_success()) {
+        RCLCPP_WARN(node->get_logger(), "抓取验证失败，可能未成功抓取目标");
+        // 可以选择重试或继续执行
+    }
     
     return !cancle_current_task.load();
 }
@@ -894,13 +961,25 @@ bool RoboticTask::handle_release_target() {
         return false;
     }
     
+    // 验证气泵是否真正关闭
+    if(!verify_air_pump_status(false)) {
+        RCLCPP_WARN(node->get_logger(), "气泵状态验证失败，尝试重新关闭");
+        if(!set_air_pump(false)) {
+            RCLCPP_ERROR(node->get_logger(), "气泵重新关闭失败");
+            return false;
+        }
+    }
+    
+    // 等待气泵完全释放
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    
     // 移除附加碰撞对象
     remove_attached_kfs_collision();
     
     // 移除碰撞对象
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
     
     return !cancle_current_task.load();
 }

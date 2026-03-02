@@ -141,6 +141,10 @@ namespace robotic_task {
 
             bool set_air_pump(bool enable); // 设置气泵参数
 
+            // 气泵和抓取验证函数
+            bool verify_air_pump_status(bool expected_status);
+            bool verify_grasp_success();
+
             const double VELOCITY_SCALING = 0.4;
             const double ACCELERATION_SCALING = 0.3;
 
