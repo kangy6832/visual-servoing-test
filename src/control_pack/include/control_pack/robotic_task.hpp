@@ -88,6 +88,7 @@ namespace robotic_task {
             std::atomic<bool> current_task_type{0}; // 任务类型
             std::atomic<int> current_kfs_num{0};
             std::atomic<bool> cancle_current_task{false};
+            std::atomic<int> current_state{ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE}; // 当前状态
             
 
 
@@ -148,7 +149,7 @@ namespace robotic_task {
                 const geometry_msgs::msg::Pose& box_pos, 
                 double approach_distance, 
                 geometry_msgs::msg::Pose& grasp_pose, 
-                ApproachMode mode 
+                int mode 
             );
 
 
@@ -156,7 +157,7 @@ namespace robotic_task {
                 const geometry_msgs::msg::Pose& box_pos, 
                 double approach_distance, 
                 geometry_msgs::msg::Pose &grasp_pose, 
-                ApproachMode mode
+                int mode
             );
 
 
@@ -222,6 +223,24 @@ namespace robotic_task {
             void ros2EndEffectorVelocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
 
             rclcpp_action::Server<robot_interfaces::action::Catch>::SharedPtr arm_handle_server; 
+
+            // 状态机相关函数
+            bool execute_move_task();
+            bool execute_catch_task();
+            bool execute_place_task();
+            
+            bool handle_idle_state();
+            bool handle_move_to_ready_catch_point();
+            bool handle_move_to_catch_point();
+            bool handle_catch_target();
+            bool handle_move_to_release_point();
+            bool handle_release_target();
+            bool handle_move_to_idle_point();
+            
+            void transition_to_state(ArmTaskState new_state);
+            void update_feedback();
+            void reset_task_state();
+            std::string get_state_description(ArmTaskState state); 
 
 
 

@@ -271,8 +271,45 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
 
     do{
         move_group_interface->setStartStateToCurrentState();
-        move_group_interface->setGoal
-    }
+        
+        // 根据任务类型执行相应的状态机
+        bool task_result = false;
+        switch(static_cast<int>(current_task_type.load())) {
+            case ArmTask::ROBOTIC_ARM_TASK_MOVE:
+                task_result = execute_move_task();
+                break;
+            case ArmTask::ROBOTIC_ARM_TASK_CATCH_TARGET:
+                task_result = execute_catch_task();
+                break;
+            case ArmTask::ROBOTIC_ARM_TASK_PLACE_TARGET:
+                task_result = execute_place_task();
+                break;
+            default:
+                RCLCPP_ERROR(node->get_logger(), "未知的任务类型: %d", current_task_type.load());
+                task_result = false;
+                break;
+        }
+        
+        // 发送最终结果
+        if(current_goal_handle) {
+            auto finish_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
+            finish_msg->success = task_result;
+            finish_msg->reason = task_result ? "任务完成" : "任务失败";
+            finish_msg->kfs_num = current_kfs_num.load();
+            
+            if(task_result) {
+                current_goal_handle->succeed(finish_msg);
+                RCLCPP_INFO(node->get_logger(), "任务成功完成");
+            } else {
+                current_goal_handle->abort(finish_msg);
+                RCLCPP_ERROR(node->get_logger(), "任务执行失败");
+            }
+        }
+        
+        // 重置任务状态
+        reset_task_state();
+        
+    } while(false); // 目前只执行一次任务
 
 
 
@@ -305,7 +342,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
     geometry_msgs::msg::Pose& grasp_pose, 
-    ApproachMode mode 
+    int mode 
 ){
     RCLCPP_INFO(
         node->get_logger(),"传入的box_pos: Pos(%lf, %lf, %lf), Ori(%lf, %lf, %lf, %lf)", 
@@ -317,7 +354,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     Eigen::Quaterniond object_quat(box_pos.orientation.w, box_pos.orientation.x, box_pos.orientation.y, box_pos.orientation.z);
     Eigen::Matrix3d object_rot = object_quat.toRotationMatrix(); // 转换为旋转矩阵
 
-    Eigen::Vector3d surface_normal = R * Eigen::Vector3d(0.0, 0.0, 1.0);
+    Eigen::Vector3d surface_normal = object_rot * Eigen::Vector3d(0.0, 0.0, 1.0);
     RCLCPP_INFO(node->get_logger(), "表面法线 = (%f, %f, %f)", surface_normal.x(), surface_normal.y(), surface_normal.z());
     
     Eigen::Vector3d to_robot_base = -object_center;
@@ -462,8 +499,8 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         result.orientation.x, result.orientation.y, result.orientation.z, result.orientation.w
     );
 
-    Eigen::Vector3d diff = prapare_position - grasp_position;
-    RCLCPP_INFO (node->get_Logger(), "准备位置-抓取位置向量 = (%f, %f, %f)",
+    Eigen::Vector3d diff = prepare_position - grasp_position;
+    RCLCPP_INFO(node->get_logger(), "准备位置-抓取位置向量 = (%f, %f, %f)",
         diff.x(), diff.y(), diff.z());
 
     double robot_aligenment = eef_x_axis.dot(away_from_robot);
@@ -475,11 +512,11 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
 
 
 
-geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos_with_orientation(
+geometry_msgs::msg::Pose RoboticTask::calculate_prepare_pose_with_orientation(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
     geometry_msgs::msg::Pose &grasp_pose, 
-    ApproachMode mode)
+    int mode)
 {
     Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
@@ -513,10 +550,10 @@ geometry_msgs::msg::Pose ArmHandleNode::calculate_prepare_pos_with_orientation(
     return result;
 }
 
-bool RobotisTask::add_attached_kfs_collision(){
+bool RoboticTask::add_attached_kfs_collision(){
     moveit_msgs::msg::AttachedCollisionObject collision_object;
     collision_object.link_name = "link6";
-    collision_oject.object.header.frame_id = "link6";
+    collision_object.object.header.frame_id = "link6";
     collision_object.object.id = "kfs";
     shape_msgs::msg::SolidPrimitive primitive;   // SolidPrimitive 为一个物体的形状
 
@@ -534,7 +571,7 @@ bool RobotisTask::add_attached_kfs_collision(){
 
 }
 
-bool ArmHandleNode::remove_attached_kfs_collision() {
+bool RoboticTask::remove_attached_kfs_collision() {
     moveit_msgs::msg::AttachedCollisionObject collision_object;
     collision_object.link_name              = "link6";
     collision_object.object.header.frame_id = "link6";
@@ -615,7 +652,7 @@ bool RoboticTask::set_air_pump(bool enable){
             RCLCPP_INFO(node->get_logger(), "设置成功");
             return true;
         } else {
-            RCLCPP_ERROR(node->get_logger(), "设置失败： %s", first_result.reason);
+            RCLCPP_ERROR(node->get_logger(), "设置失败： %s", first_result.reason.c_str());
             return false;
         }
     } catch (const std::exception& e){
@@ -627,6 +664,333 @@ bool RoboticTask::set_air_pump(bool enable){
 // 获取关节位置
 Eigen::VectorXd RoboticTask::get_joint_position() const {
     return joint_position;
+}
+
+// 关节状态回调函数
+void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg) {
+    // 更新关节位置
+    if (msg->joints.size() >= 6) {
+        for (size_t i = 0; i < 6 && i < msg->joints.size(); ++i) {
+            joint_position(i) = msg->joints[i].rad;
+        }
+    }
+}
+
+// ==================== 状态机相关函数实现 ====================
+
+// 执行移动任务
+bool RoboticTask::execute_move_task() {
+    RCLCPP_INFO(node->get_logger(), "开始执行移动任务");
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
+    if(!handle_move_to_ready_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT);
+    if(!handle_move_to_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
+    return handle_idle_state();
+}
+
+// 执行抓取任务
+bool RoboticTask::execute_catch_task() {
+    RCLCPP_INFO(node->get_logger(), "开始执行抓取任务");
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
+    if(!handle_move_to_ready_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT);
+    if(!handle_move_to_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_CATCH_TARGET);
+    if(!handle_catch_target()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT);
+    if(!handle_move_to_release_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_RELEASE_TARGET);
+    if(!handle_release_target()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
+    if(!handle_move_to_idle_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
+    return handle_idle_state();
+}
+
+// 执行放置任务
+bool RoboticTask::execute_place_task() {
+    RCLCPP_INFO(node->get_logger(), "开始执行放置任务");
+    
+    // 与抓取任务类似的状态序列，但逻辑不同
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
+    if(!handle_move_to_ready_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT);
+    if(!handle_move_to_catch_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_CATCH_TARGET);
+    if(!handle_catch_target()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT);
+    if(!handle_move_to_release_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_RELEASE_TARGET);
+    if(!handle_release_target()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
+    if(!handle_move_to_idle_point()) return false;
+    
+    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
+    return handle_idle_state();
+}
+
+// 状态处理函数
+bool RoboticTask::handle_idle_state() {
+    RCLCPP_INFO(node->get_logger(), "处理空闲状态");
+    update_feedback();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    return true;
+}
+
+bool RoboticTask::handle_move_to_ready_catch_point() {
+    RCLCPP_INFO(node->get_logger(), "处理移动到预备抓取位置状态");
+    update_feedback();
+    
+    // ========================================
+    // 📍 实现位置1: 移动到预备抓取位置的路径规划
+    // ========================================
+    // 需要实现的具体内容:
+    // 1. 使用 calculate_target_pose() 计算预备抓取位置
+    // 2. 使用 move_group_interface->setPoseTarget() 设置目标
+    // 3. 使用 move_group_interface->plan() 规划路径
+    // 4. 使用 move_group_interface->execute() 执行移动
+    // 5. 检查规划结果和执行状态
+    // 6. 处理可能的规划失败和重试逻辑
+    
+    // 当前占位符实现:
+    geometry_msgs::msg::Pose grasp_pose;
+    geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
+        task_target_pos, 0.1, grasp_pose, static_cast<int>(ApproachMode::AUTO)
+    );
+    
+    move_group_interface->setPoseTarget(prepare_pose);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    
+    // TODO: 添加路径规划逻辑
+    // auto success = move_group_interface->plan(plan);
+    // if (success == moveit::core::MoveItErrorCode::SUCCESS) {
+    //     move_group_interface->execute(plan);
+    // }
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    
+    return !cancle_current_task.load();
+}
+
+bool RoboticTask::handle_move_to_catch_point() {
+    RCLCPP_INFO(node->get_logger(), "处理移动到抓取位置状态");
+    update_feedback();
+    
+    // ========================================
+    // 📍 实现位置2: 移动到抓取位置的路径规划
+    // ========================================
+    // 需要实现的具体内容:
+    // 1. 使用 calculate_target_pose() 计算精确抓取位置
+    // 2. 设置更精确的位置和方向约束
+    // 3. 使用 move_group_interface->setPoseTarget() 设置目标
+    // 4. 考虑避障和碰撞检测
+    // 5. 实现更精细的路径规划（可能需要视觉伺服）
+    // 6. 添加接近速度控制
+    
+    // 当前占位符实现:
+    geometry_msgs::msg::Pose grasp_pose;
+    geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
+        task_target_pos, 0.05, grasp_pose, static_cast<int>(ApproachMode::POS)
+    );
+    
+    // 使用计算出的抓取位置而不是预备位置
+    move_group_interface->setPoseTarget(grasp_pose);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    
+    // TODO: 添加精细路径规划逻辑
+    // 可能需要使用视觉伺服进行最终定位
+    // 考虑使用更小的步进接近目标
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    
+    return !cancle_current_task.load();
+}
+
+bool RoboticTask::handle_catch_target() {
+    RCLCPP_INFO(node->get_logger(), "处理抓取目标状态");
+    update_feedback();
+    
+    // 添加碰撞对象
+    add_kfs_collision(task_target_pos, "target_kfs", move_group_interface->getPlanningFrame());
+    
+    // 开启气泵
+    if(!set_air_pump(true)) {
+        RCLCPP_ERROR(node->get_logger(), "开启气泵失败");
+        return false;
+    }
+    
+    // 添加附加碰撞对象
+    add_attached_kfs_collision();
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+    return !cancle_current_task.load();
+}
+
+bool RoboticTask::handle_move_to_release_point() {
+    RCLCPP_INFO(node->get_logger(), "处理移动到释放位置状态");
+    update_feedback();
+    
+    // ========================================
+    // 📍 实现位置3: 移动到释放位置的路径规划
+    // ========================================
+    // 需要实现的具体内容:
+    // 1. 根据任务类型计算释放位置（车上或指定位置）
+    // 2. 对于抓取任务：计算车辆上的释放位置
+    // 3. 对于放置任务：计算目标放置位置
+    // 4. 考虑携带物体时的碰撞检测
+    // 5. 实现安全的释放路径规划
+    // 6. 添加释放前的位置确认
+    
+    // 当前占位符实现:
+    geometry_msgs::msg::Pose release_pose;
+    
+    if (static_cast<int>(current_task_type.load()) == ArmTask::ROBOTIC_ARM_TASK_CATCH_TARGET) {
+        // 抓取任务：释放到车上
+        // TODO: 计算车辆上的释放位置
+        release_pose = task_target_pos; // 临时使用目标位置
+        release_pose.position.z += 0.2; // 抬高一些
+    } else if (static_cast<int>(current_task_type.load()) == ArmTask::ROBOTIC_ARM_TASK_PLACE_TARGET) {
+        // 放置任务：释放到指定位置
+        // TODO: 使用任务目标作为释放位置
+        release_pose = task_target_pos;
+    }
+    
+    move_group_interface->setPoseTarget(release_pose);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    
+    // TODO: 添加释放位置路径规划逻辑
+    // 考虑携带物体时的动力学约束
+    // 添加释放前的最终位置确认
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    
+    return !cancle_current_task.load();
+}
+
+bool RoboticTask::handle_release_target() {
+    RCLCPP_INFO(node->get_logger(), "处理释放目标状态");
+    update_feedback();
+    
+    // 关闭气泵
+    if(!set_air_pump(false)) {
+        RCLCPP_ERROR(node->get_logger(), "关闭气泵失败");
+        return false;
+    }
+    
+    // 移除附加碰撞对象
+    remove_attached_kfs_collision();
+    
+    // 移除碰撞对象
+    remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+    return !cancle_current_task.load();
+}
+
+bool RoboticTask::handle_move_to_idle_point() {
+    RCLCPP_INFO(node->get_logger(), "处理移动到空闲位置状态");
+    update_feedback();
+    
+    // ========================================
+    // 📍 实现位置4: 移动到空闲位置的路径规划
+    // ========================================
+    // 需要实现的具体内容:
+    // 1. 定义安全的空闲位置（通常为机械臂的初始位置）
+    // 2. 设置所有关节角度到安全位置
+    // 3. 或设置末端执行器到安全坐标
+    // 4. 确保路径无碰撞
+    // 5. 实现平滑的归位运动
+    // 6. 添加到达确认
+    
+    // 当前占位符实现:
+    // 定义空闲位置（可根据实际机械臂调整）
+    geometry_msgs::msg::Pose idle_pose;
+    idle_pose.position.x = 0.0;
+    idle_pose.position.y = 0.0;
+    idle_pose.position.z = 0.5;
+    idle_pose.orientation.x = 0.0;
+    idle_pose.orientation.y = 0.0;
+    idle_pose.orientation.z = 0.0;
+    idle_pose.orientation.w = 1.0;
+    
+    move_group_interface->setPoseTarget(idle_pose);
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    
+    // TODO: 添加空闲位置路径规划逻辑
+    // 可能使用命名关节位置而不是笛卡尔位置
+    // 确保所有关节都在安全范围内
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    
+    return !cancle_current_task.load();
+}
+
+// 辅助函数
+void RoboticTask::transition_to_state(ArmTaskState new_state) {
+    current_state.store(new_state);
+    RCLCPP_INFO(node->get_logger(), "状态转换到: %s", get_state_description(new_state).c_str());
+}
+
+void RoboticTask::update_feedback() {
+    if(current_goal_handle) {
+        auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
+        feedback_msg->current_state = current_state.load();
+        feedback_msg->state_describe = get_state_description(static_cast<ArmTaskState>(current_state.load()));
+        current_goal_handle->publish_feedback(feedback_msg);
+    }
+}
+
+void RoboticTask::reset_task_state() {
+    RCLCPP_INFO(node->get_logger(), "重置任务状态");
+    current_state.store(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
+    cancle_current_task.store(false);
+    current_goal_handle.reset();
+    
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        is_running_arm_task = false;
+    }
+}
+
+std::string RoboticTask::get_state_description(ArmTaskState state) {
+    switch(state) {
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE:
+            return "空闲状态";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT:
+            return "移动到预备抓取位置";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT:
+            return "移动到抓取位置";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_CATCH_TARGET:
+            return "抓取目标";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_VISUAL_SERVOING:
+            return "视觉伺服";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT:
+            return "移动到释放位置";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_RELEASE_TARGET:
+            return "释放目标";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT:
+            return "移动到空闲位置";
+        default:
+            return "未知状态";
+    }
 }
 
 
