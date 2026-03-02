@@ -1,3 +1,14 @@
+/**
+ * @file robotic_task.cpp
+ * @brief 视觉伺服系统RoboticTask类的实现。
+ * 
+ * 本文件包含RoboticTask类的实现，该类管理机械臂操作，包括移动、抓取和放置任务。
+ * 它实现了用于任务执行的状态机，并提供运动规划、碰撞处理和气泵控制的接口。
+ * 
+ * @author 视觉伺服团队
+ * @date 2025
+ */
+
 #include "control_pack/robotic_task.hpp"
 #include "control_pack/robot_pose_polynomial.hpp"
 #include "control_pack/velocity_ik_generator.hpp"
@@ -43,31 +54,51 @@
 using namespace std::chrono_literals;
 using namespace robotic_task;
 
+/**
+ * @brief RoboticTask类的构造函数。
+ * 
+ * 初始化所有必要的组件，包括：
+ * - 关节位置为零向量
+ * - 任务管理的动作服务器
+ * - 坐标变换的TF2缓冲区和监听器
+ * - 运动规划的MoveIt接口
+ * - ROS2发布器和订阅器
+ * - 碰撞对象和规划场景
+ * - 任务执行线程
+ * 
+ * @param node 用于通信的ROS2节点共享指针
+ */
 RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     // 初始化关节位置为6维零向量（假设6关节机器人）
     joint_position = Eigen::VectorXd::Zero(6);
     
+    // 初始化用于驱动节点通信的异步参数客户端
     param_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
+    // 创建机器人任务管理的动作服务器
     arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(node, "robotic_task", 
         std::bind(&RoboticTask::handle_goal, this, std::placeholders::_1, std::placeholders::_2), 
         std::bind(&RoboticTask::cancel_goal, this, std::placeholders::_1), 
         std::bind(&RoboticTask::handle_accepted, this, std::placeholders::_1)
     );
 
+    // 初始化坐标框架变换的TF2缓冲区和监听器
     camera_link0_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     camera_link0_tf_lisenter_ = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
     link5_point_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     link5_point_tf_lisenter_ = std::make_shared<tf2_ros::TransformListener>(*link5_point_tf_buffer);
     
+    // 初始化运动规划和场景管理的MoveIt接口
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
     psi = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
 
+    // 创建实时关节位置监控的关节状态订阅器
     joint_state_subscriber_ = node->create_subscription<robot_interfaces::msg::Robot>(
         "joint_states", 10,
         std::bind(&RoboticTask::jointStateCallback, this, std::placeholders::_1)
     );
 
+    // 创建可视化标记发布定时器（显示目标位置）
     node->create_wall_timer
     (
         100ms, 
@@ -77,13 +108,14 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
             if(!is_running_arm_task) return;
         }
 
+        // 创建和配置目标位置的可视化标记
         visualization_msgs::msg::Marker marker;
         marker.header.frame_id = "base_link";
         marker.header.stamp = this->node->now();
         marker.ns = "kfs_pos";
         marker.id = 0;
         marker.type = visualization_msgs::msg::Marker::SPHERE;  // 显示球体标记
-        marker.action = visualization_msgs::msg::Marker::ADD;   // 增加标记
+        marker.action = visualization_msgs::msg::Marker::ADD;   // 添加标记
         marker.pose = task_target_pos;
 
         marker.scale.x = 0.08;
@@ -101,11 +133,13 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
         mark_pub_->publish(marker);
     });  
 
+    // 初始化附加的KFS位置（相对于link6）
     attached_kfs_pos.orientation.w = 1.0;
     attached_kfs_pos.position.x = 0.0;
     attached_kfs_pos.position.y = 0.0;
     attached_kfs_pos.position.z = -0.24;
 
+    // 配置MoveIt运动规划参数
     move_group_interface->setPlanningTime(10.0);
     move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);            // 设置速度缩放因子
     move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);    // 设置加速度缩放因子
@@ -120,29 +154,55 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     // move_group_interface->setEndEffectorLink("wrist_3_link"); // 设置末端效果器链接
     // move_group_interface->setSupportSurfaceName("table"); // 设置支持表面名称
 
-    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());  // 创建 TF2 缓存
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_); // 创建 TF2 监听器
+    // 初始化通用坐标变换的主TF2缓冲区和监听器
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node->get_clock());  // 创建TF2缓冲区
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_); // 创建TF2监听器
 
+    // 创建并启动机械臂任务处理线程
     try{
         arm_task_thread = std::make_unique<std::thread>([this](){arm_catch_task_handle();});
     } catch (const std::exception& e){
-        RCLCPP_ERROR(node->get_logger(), "创建机械臂任务线程失败： %s", e.what());
+        RCLCPP_ERROR(node->get_logger(), "创建机械臂任务线程失败: %s", e.what());
         arm_task_thread = nullptr;
     }
 }
 
 
+/**
+ * @brief RoboticTask类的析构函数。
+ * 
+ * 确保适当的清理，包括：
+ * - 通知任务线程退出
+ * - 等待线程完成
+ * - 释放所有资源
+ */
 RoboticTask::~RoboticTask(){
-    task_mutex_.lock();  // 加锁
+    task_mutex_.lock();  // 获取锁
     has_new_task_ = true;
     task_mutex_.unlock();
     task_cv_.notify_one(); 
     
+    // 等待任务线程完成
     if(arm_task_thread && arm_task_thread->joinable()){
         arm_task_thread->join();
     }
 }
 
+
+/**
+ * @brief 处理传入的动作目标。
+ * 
+ * 通过以下方式验证目标请求：
+ * - 检查是否有其他任务正在运行
+ * - 验证相机变换的可用性
+ * - 将目标位姿转换到base_link坐标系
+ * - 归一化四元数
+ * - 设置当前任务类型
+ * 
+ * @param uuid 目标请求的UUID
+ * @param goal 目标消息的共享指针
+ * @return 表示接受或拒绝的GoalResponse
+ */
 rclcpp_action::GoalResponse RoboticTask::handle_goal(
     const rclcpp_action::GoalUUID& uuid, 
     std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal
@@ -155,20 +215,23 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
         }
     }
 
+    // 验证相机到base_link的变换是否可用
     try{
         camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
     } catch (const tf2::TransformException& ex){
-        RCLCPP_WARN(node->get_logger(), "无法获取相机到基座的变换： %s", ex.what());
+        RCLCPP_WARN(node->get_logger(), "无法获取相机到基座的变换: %s", ex.what());
         return rclcpp_action::GoalResponse::REJECT;
     }
 
+    // 将目标位姿从相机坐标系转换到base_link坐标系
     tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
-    RCLCPP_INFO(node->get_logger(), "原始目标位姿： Pos(%lf, %lf, %lf), Ori(%lf, %lf, %lf, %lf)",
+    RCLCPP_INFO(node->get_logger(), "原始目标位姿: Pos(%lf, %lf, %lf), Ori(%lf, %lf, %lf, %lf)",
                 goal->target_pose.position.x, goal->target_pose.position.y, 
                 goal->target_pose.position.z, goal->target_pose.orientation.x, 
                 goal->target_pose.orientation.y, goal->target_pose.orientation.z, 
                 goal->target_pose.orientation.w);
 
+    // 归一化四元数以确保有效的旋转
     auto qin = task_target_pos.orientation;
     tf2::Quaternion q(qin.x, qin.y, qin.z, qin.w);
     q.normalize();
@@ -182,6 +245,19 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
+
+/**
+ * @brief 处理动作目标取消请求。
+ * 
+ * 通过以下方式处理取消：
+ * - 设置取消标志
+ * - 停止当前任务执行
+ * - 移除碰撞对象
+ * - 关闭气泵
+ * 
+ * @param goal_handle 要取消的目标句柄的共享指针
+ * @return 表示接受取消的CancelResponse
+ */
 rclcpp_action::CancelResponse RoboticTask::cancel_goal(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle 
 ){
@@ -192,13 +268,23 @@ rclcpp_action::CancelResponse RoboticTask::cancel_goal(
         is_running_arm_task = false;
     }
 
+    // 清理碰撞对象和气泵
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
-
     set_air_pump(false);
 
     return rclcpp_action::CancelResponse::ACCEPT;
 }
 
+
+/**
+ * @brief 处理已接受的动作目标并开始执行。
+ * 
+ * 当目标被接受且应开始执行时调用。
+ * 设置目标句柄，将任务标记为正在运行，并通知
+ * 任务线程开始处理。
+ * 
+ * @param goal_handle 已接受的目标句柄的共享指针
+ */
 void robotic_task::RoboticTask::handle_accepted(
     const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
 ){
@@ -209,13 +295,24 @@ void robotic_task::RoboticTask::handle_accepted(
     }
     cancle_current_task = false;
 
+    // 通知任务线程有新任务可用
     task_mutex_.lock();
     has_new_task_ = true;
     task_mutex_.unlock();
     task_cv_.notify_one();
-
 }
 
+
+/**
+ * @brief 主要的机械臂任务处理线程函数。
+ * 
+ * 此函数在单独的线程中运行，使用状态机方法管理机械臂任务的执行。它：
+ * - 为环境设置碰撞对象
+ * - 等待任务通知
+ * - 根据任务类型执行适当的任务
+ * - 通过动作服务器发送回结果
+ * - 处理任务状态转换
+ */
 void robotic_task::RoboticTask::arm_catch_task_handle(){
     RCLCPP_INFO(node->get_logger(), "进入机械臂任务处理线程");
     bool first_run = true;
@@ -226,20 +323,23 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
     auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
     auto finish_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
 
+    // 等待系统初始化
     std::this_thread::sleep_for(5s);
     {
-        // 添加抬升装置障碍
+        // 为规划场景添加提升机构障碍物
         moveit_msgs::msg::CollisionObject collision_object;
         collision_object.header.frame_id = move_group_interface->getPlanningFrame();
         collision_object.id = "instituion";
         collision_object.primitives.resize(4);
         collision_object.primitive_poses.resize(4);
 
+        // 为所有障碍物设置方向（单位四元数）
         collision_object.primitive_poses[0].orientation.w = 1.0;
         collision_object.primitive_poses[1].orientation.w = 1.0;
         collision_object.primitive_poses[2].orientation.w = 1.0;
         collision_object.primitive_poses[3].orientation.w = 1.0;
 
+        // 在工作空间周围定位障碍物
         collision_object.primitive_poses[0].position.x = -0.60;
         collision_object.primitive_poses[0].position.y = 0.35;
         collision_object.primitive_poses[0].position.z = 0.3;
@@ -256,6 +356,7 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
         collision_object.primitive_poses[3].position.y = -0.35;
         collision_object.primitive_poses[3].position.z = 0.3;
 
+        // 为障碍物定义盒子形状
         shape_msgs::msg::SolidPrimitive primitive;
         collision_object.primitives[0].type = primitive.BOX;
         collision_object.primitives[0].dimensions.resize(3);
@@ -272,7 +373,7 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
     do{
         move_group_interface->setStartStateToCurrentState();
         
-        // 根据任务类型执行相应的状态机
+        // 根据任务类型执行适当的任务
         bool task_result = false;
         switch(static_cast<int>(current_task_type.load())) {
             case ArmTask::ROBOTIC_ARM_TASK_MOVE:
@@ -290,11 +391,11 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
                 break;
         }
         
-        // 发送最终结果
+        // 通过动作服务器发送最终结果
         if(current_goal_handle) {
             auto finish_msg = std::make_shared<robot_interfaces::action::Catch::Result>();
             finish_msg->success = task_result;
-            finish_msg->reason = task_result ? "任务完成" : "任务失败";
+            finish_msg->reason = task_result ? "Task completed" : "Task failed";
             finish_msg->kfs_num = current_kfs_num.load();
             
             if(task_result) {
@@ -306,38 +407,38 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
             }
         }
         
-        // 重置任务状态
+        // 为下一个任务重置任务状态
         reset_task_state();
         
-    } while(false); // 目前只执行一次任务
+    } while(false); // 目前每个请求只执行一个任务
 
 
 
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/**
+ * @brief 计算接近和抓取的目标位姿。
+ * 
+ * 此函数基于以下因素计算最佳的接近和抓取位姿：
+ * - 物体位置和方向
+ * - 表面法线计算
+ * - 机器人运动学约束
+ * - 碰撞避免考虑
+ * 
+ * 算法：
+ * 1. 提取物体中心和方向
+ * 2. 从物体方向计算表面法线
+ * 3. 根据机器人位置确定接近方向
+ * 4. 计算带有适当偏移的抓取和准备位置
+ * 5. 计算最佳抓取的末端执行器方向
+ * 
+ * @param box_pos 目标物体的位置和方向
+ * @param approach_distance 接近位姿距离抓取位置的距离
+ * @param grasp_pose 计算的抓取位姿的输出参数
+ * @param mode 接近模式（AUTO或POS）
+ * @return 初始定位的计算接近位姿
+ */
 geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
@@ -350,26 +451,31 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         box_pos.orientation.x, box_pos.orientation.y, box_pos.orientation.z, box_pos.orientation.w
     );
     
+    // 从输入位姿提取物体中心和方向
     Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
     Eigen::Quaterniond object_quat(box_pos.orientation.w, box_pos.orientation.x, box_pos.orientation.y, box_pos.orientation.z);
     Eigen::Matrix3d object_rot = object_quat.toRotationMatrix(); // 转换为旋转矩阵
 
+    // 计算表面法线（假设Z轴是物体的向上方向）
     Eigen::Vector3d surface_normal = object_rot * Eigen::Vector3d(0.0, 0.0, 1.0);
     RCLCPP_INFO(node->get_logger(), "表面法线 = (%f, %f, %f)", surface_normal.x(), surface_normal.y(), surface_normal.z());
     
+    // 计算从机器人基座到物体的方向
     Eigen::Vector3d to_robot_base = -object_center;
     
+    // 确保表面法线指向机器人
     if(surface_normal.dot(to_robot_base) < 0.0){  // dot 计算点积
         surface_normal = -surface_normal;
         RCLCPP_INFO(node->get_logger(), "反转表面法线为 (%f, %f, %f)", surface_normal.x(), surface_normal.y(), surface_normal.z());
     }
 
+    // 计算表面位置和抓取/准备位置
     const double object_half_size = 0.175;
     Eigen::Vector3d surface_position = object_center + object_half_size * surface_normal;
     RCLCPP_INFO(node->get_logger(), "表面位置 = (%f, %f, %f)", surface_position.x(), surface_position.y(), surface_position.z());
 
-    const double inside_offset = 0.05;
-    const double outside_offset = 0.05;
+    const double inside_offset = 0.05;  // 抓取的内部偏移
+    const double outside_offset = 0.05;  // 接近的外部偏移
 
     Eigen::Vector3d grasp_position = surface_position - inside_offset * surface_normal;
     Eigen::Vector3d prepare_position = surface_position + outside_offset * surface_normal;
@@ -377,11 +483,12 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     RCLCPP_INFO(node->get_logger(), "抓取位置 = (%f, %f, %f)", grasp_position.x(), grasp_position.y(), grasp_position.z());
     RCLCPP_INFO(node->get_logger(), "准备位置 = (%f, %f, %f)", prepare_position.x(), prepare_position.y(), prepare_position.z());
 
+    // 计算最佳接近的机器人到物体方向向量
     Eigen::Vector3d robot_base(0.0, 0.0, 0.0);
     Eigen::Vector3d robot_to_object = object_center - robot_base;
-    Eigen::Vector3d  robot_side_direction;
+    Eigen::Vector3d robot_side_direction;
     robot_side_direction = robot_to_object;
-    robot_side_direction.z() = 0;
+    robot_side_direction.z() = 0;  // 投影到XY平面
     robot_side_direction.normalize();
 
     Eigen::Vector3d away_from_robot = -robot_side_direction;
@@ -401,11 +508,13 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         "机器人远离方向向量 = (%f, %f, %f)", away_from_robot.x(), away_from_robot.y(), away_from_robot.z()
     );
 
+    // 计算最佳吸杯对齐的末端执行器方向
     Eigen::Vector3d eef_x_axis;
     Eigen::Vector3d eef_y_axis;
     Eigen::Vector3d eef_z_axis;
 
-    Eigen::Vector3d suction_dir = away_from_robot - away_from_robot.dot(surface_normal) * surface_normal; // 计算吸盘方向
+    // 计算吸杯方向（垂直于表面法线，指向远离机器人的方向）
+    Eigen::Vector3d suction_dir = away_from_robot - away_from_robot.dot(surface_normal) * surface_normal;
     suction_dir.normalize();
 
     RCLCPP_INFO(
@@ -413,18 +522,21 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         "吸盘方向计算 = (%f, %f, %f)", suction_dir.x(), suction_dir.y(), suction_dir.z()
     );
 
+    // 验证吸杯方向对齐
     double normal_alignment = std::abs(suction_dir.dot(surface_normal));
-    RCLCPP_INFO(node->get_logger(), "吸盘法线对齐度(应为0) = %f", normal_alignment);
-    RCLCPP_INFO(node->get_logger(), "吸盘方向z分量:%f (应接近零)", suction_dir.z());
+    RCLCPP_INFO(node->get_logger(), "吸盘法线对齐度（应为0） = %f", normal_alignment);
+    RCLCPP_INFO(node->get_logger(), "吸盘方向z分量: %f （应接近零）", suction_dir.z());
 
-    double away_aliignment = suction_dir.dot(away_from_robot);
-    RCLCPP_INFO(node->get_logger(), "吸盘远离方向对齐度(应为0) = %f", away_aliignment);
+    double away_alignment = suction_dir.dot(away_from_robot);
+    RCLCPP_INFO(node->get_logger(), "吸盘远离方向对齐度（应为0） = %f", away_alignment);
 
-    if(normal_alignment > 0.1 || away_aliignment < 0.9 || std::abs(suction_dir.z()) > 0.1){
+    // 如果主要计算失败，使用备用计算
+    if(normal_alignment > 0.1 || away_alignment < 0.9 || std::abs(suction_dir.z()) > 0.1){
         RCLCPP_ERROR(node->get_logger(), "吸盘方向计算错误");
-        RCLCPP_WARN(node->get_logger(), "使用备选方案计算吸盘方向");
+        RCLCPP_WARN(node->get_logger(), "使用备用方案计算吸盘方向");
 
-        Eigen::Vector3d temp = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0)); // cross 计算叉乘
+        // 备用方案：使用与全局Z轴的叉积
+        Eigen::Vector3d temp = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
         if(temp.norm() < 1e-6){
             temp = surface_normal.cross(Eigen::Vector3d(1.0, 0.0, 0.0));
         }
@@ -438,9 +550,11 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         }
     }
 
+    // 设置末端执行器X轴为吸杯方向
     eef_x_axis = suction_dir;
     RCLCPP_INFO(node->get_logger(), "最终吸盘方向 = (%f, %f, %f)", eef_x_axis.x(), eef_x_axis.y(), eef_x_axis.z());
 
+    // 使用与全局轴的叉积计算末端执行器Y轴
     Eigen::Vector3d global_x(1.0, 0.0, 0.0);
     Eigen::Vector3d global_y(0.0, 1.0, 0.0);
     Eigen::Vector3d global_z(0.0, 0.0, 1.0);
@@ -451,6 +565,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         eef_y_axis = global_x.cross(eef_x_axis);
     }
 
+    // 如果叉积结果为零向量，则使用备用方案
     if(eef_y_axis.norm() < 1e-6){
         eef_y_axis = global_z.cross(eef_x_axis);
     }
@@ -458,13 +573,18 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
 
     RCLCPP_INFO(node->get_logger(), "末端Y轴方向 = (%f, %f, %f)", eef_y_axis.x(), eef_y_axis.y(), eef_y_axis.z());
     
+    // 计算Z轴作为X和Y轴的叉积
+    eef_z_axis = eef_x_axis.cross(eef_y_axis);
     RCLCPP_INFO(node->get_logger(), "末端Z轴方向 = (%f, %f, %f)", eef_z_axis.x(), eef_z_axis.y(), eef_z_axis.z());
+    
+    // 从计算的轴构建旋转矩阵
     Eigen::Matrix3d R_eef;
     R_eef.col(0) = eef_x_axis;
     R_eef.col(1) = eef_y_axis;
     R_eef.col(2) = eef_z_axis;
     Eigen::Quaterniond q_eef(R_eef);
 
+    // 构建接近位置的结果位姿
     geometry_msgs::msg::Pose result;
     result.position.x = prepare_position.x();
     result.position.y = prepare_position.y();
@@ -474,6 +594,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     result.orientation.z = q_eef.z();
     result.orientation.w = q_eef.w();
 
+    // 设置输出抓取位姿参数
     grasp_pose.position.x = grasp_position.x();
     grasp_pose.position.y = grasp_position.y();
     grasp_pose.position.z = grasp_position.z(); 
@@ -482,54 +603,70 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     grasp_pose.orientation.z = q_eef.z();
     grasp_pose.orientation.w = q_eef.w();
     
+    // 记录计算结果用于调试
     RCLCPP_INFO(
         node->get_logger(), 
         "======================= 计算结果汇总 ========================"
     );
     RCLCPP_INFO(
         node->get_logger(), 
-        "抓取位姿 = Pos(%f, %f, %f)， Ori(%f, %f, %f, %f)", 
+        "抓取位姿 = Pos(%f, %f, %f), Ori(%f, %f, %f, %f)", 
         grasp_pose.position.x, grasp_pose.position.y, grasp_pose.position.z,
         grasp_pose.orientation.x, grasp_pose.orientation.y, grasp_pose.orientation.z, grasp_pose.orientation.w
     );
     RCLCPP_INFO(
         node->get_logger(), 
-        "准备位姿 = Pos(%f, %f, %f)， Ori(%f, %f, %f, %f)", 
+        "准备位姿 = Pos(%f, %f, %f), Ori(%f, %f, %f, %f)", 
         result.position.x, result.position.y, result.position.z,
         result.orientation.x, result.orientation.y, result.orientation.z, result.orientation.w
     );
 
+    // 验证接近向量
     Eigen::Vector3d diff = prepare_position - grasp_position;
     RCLCPP_INFO(node->get_logger(), "准备位置-抓取位置向量 = (%f, %f, %f)",
         diff.x(), diff.y(), diff.z());
 
-    double robot_aligenment = eef_x_axis.dot(away_from_robot);
-    RCLCPP_INFO(node->get_logger(),"吸盘于远离机器人方向对齐度 = %f(应为1)", robot_aligenment);
+    double robot_alignment = eef_x_axis.dot(away_from_robot);
+    RCLCPP_INFO(node->get_logger(),"吸盘于远离机器人方向对齐度 = %f(应为1)", robot_alignment);
 
     return result;
 }
 
 
-
-
+/**
+ * @brief 计算准备位姿（使用固定方向）。
+ * 
+ * 简化的位姿计算函数，使用固定方向沿X轴进行接近。该函数适用于测试或物体方向不重要的情况。
+ * 
+ * @param box_pos 目标物体的位置和方向
+ * @param approach_distance 接近位姿距离抓取位置的距离
+ * @param grasp_pose 计算的抓取位姿的输出参数
+ * @param mode 接近模式（当前未使用）
+ * @return 计算的准备位姿
+ */
 geometry_msgs::msg::Pose RoboticTask::calculate_prepare_pose_with_orientation(
     const geometry_msgs::msg::Pose& box_pos, 
     double approach_distance, 
     geometry_msgs::msg::Pose &grasp_pose, 
     int mode)
 {
+    // 提取物体中心和方向
     Eigen::Vector3d object_center(box_pos.position.x, box_pos.position.y, box_pos.position.z);
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
                          box_pos.orientation.y, box_pos.orientation.z);
     
+    // 使用固定方向沿X轴进行接近
     Eigen::Vector3d approach_direction(1.0, 0.0, 0.0);
     
+    // 计算抓取和准备位置（使用固定偏移）
     const double object_half_size_x = 0.35;
     Eigen::Vector3d grasp_position = object_center - object_half_size_x * approach_direction;
     Eigen::Vector3d prepare_position = grasp_position + approach_distance * approach_direction;
     
+    // 使用单位四元数表示末端执行器方向
     Eigen::Quaterniond q_eef(1.0, 0.0, 0.0, 0.0);
     
+    // 构造结果位姿（准备位置）
     geometry_msgs::msg::Pose result;
     result.position.x = prepare_position.x();
     result.position.y = prepare_position.y();
@@ -539,6 +676,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_prepare_pose_with_orientation(
     result.orientation.y = q_eef.y();
     result.orientation.z = q_eef.z();
     
+    // 设置输出抓取位姿参数
     grasp_pose.position.x = grasp_position.x();
     grasp_pose.position.y = grasp_position.y();
     grasp_pose.position.z = grasp_position.z();
@@ -550,13 +688,23 @@ geometry_msgs::msg::Pose RoboticTask::calculate_prepare_pose_with_orientation(
     return result;
 }
 
+
+/**
+ * @brief 向机器人添加附加的KFS碰撞对象。
+ * 
+ * 创建并附加一个代表KFS（运动反馈系统）的碰撞对象到机器人的link6。
+ * 这用于模拟成功抓取后机器人携带的物体。
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::add_attached_kfs_collision(){
     moveit_msgs::msg::AttachedCollisionObject collision_object;
     collision_object.link_name = "link6";
     collision_object.object.header.frame_id = "link6";
     collision_object.object.id = "kfs";
-    shape_msgs::msg::SolidPrimitive primitive;   // SolidPrimitive 为一个物体的形状
-
+    
+    // 为KFS对象定义盒子形状
+    shape_msgs::msg::SolidPrimitive primitive;
     primitive.type = primitive.BOX;
     primitive.dimensions.resize(3);
     primitive.dimensions[primitive.BOX_X] = 0.35;
@@ -566,23 +714,48 @@ bool RoboticTask::add_attached_kfs_collision(){
     collision_object.object.primitives.push_back(primitive);
     collision_object.object.primitive_poses.push_back(attached_kfs_pos);
     collision_object.object.operation = collision_object.object.ADD;
+    
+    // 将附加碰撞对象应用到规划场景
     psi->applyAttachedCollisionObject(collision_object);
     return true;
-
 }
 
+
+/**
+ * @brief 从机器人移除附加的KFS碰撞对象。
+ * 
+ * 从link6移除附加的KFS碰撞对象，同时也从规划场景中移除任何对应的碰撞对象。
+ * 这通常在释放物体后调用。
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::remove_attached_kfs_collision() {
     moveit_msgs::msg::AttachedCollisionObject collision_object;
-    collision_object.link_name              = "link6";
+    collision_object.link_name = "link6";
     collision_object.object.header.frame_id = "link6";
-    collision_object.object.id              = "kfs";
-    collision_object.object.operation       = collision_object.object.REMOVE;
+    collision_object.object.id = "kfs";
+    collision_object.object.operation = collision_object.object.REMOVE;
+    
+    // Remove attached collision object
     psi->applyAttachedCollisionObject(collision_object);
 
+    // 同时移除具有相同ID的独立碰撞对象
     remove_kfs_collision("kfs", move_group_interface->getPlanningFrame());
     return true;
 }
 
+
+/**
+ * @brief 向规划场景添加KFS碰撞对象。
+ * 
+ * 添加一个代表KFS的独立碰撞对象到规划场景。
+ * 这用于表示环境中机器人需要避免或与之交互的物体。
+ * 
+ * @param pose 碰撞对象的位置和方向
+ * @param object_id 对象的唯一标识符
+ * @param frame_id 对象位置的参考坐标系
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::add_kfs_collision(
     const geometry_msgs::msg::Pose& pose, 
     const std::string& object_id, 
@@ -591,19 +764,33 @@ bool RoboticTask::add_kfs_collision(
     moveit_msgs::msg::CollisionObject collision_object;
     collision_object.header.frame_id = frame_id;
     collision_object.id = object_id;
+    
+    // 为碰撞对象定义盒子形状
     shape_msgs::msg::SolidPrimitive primitive;
     primitive.type = primitive.BOX;
     primitive.dimensions.resize(3); 
     primitive.dimensions[primitive.BOX_X] = 0.35;
     primitive.dimensions[primitive.BOX_Y] = 0.35;
     primitive.dimensions[primitive.BOX_Z] = 0.35;
+    
     collision_object.primitives.push_back(primitive);
     collision_object.primitive_poses.push_back(pose);
+    
+    // 将碰撞对象添加到规划场景
     psi->applyCollisionObject(collision_object);
     return true;
 }
 
 
+/**
+ * @brief 从规划场景移除KFS碰撞对象。
+ * 
+ * 使用唯一标识符从规划场景中移除独立碰撞对象。
+ * 
+ * @param object_id 要移除对象的唯一标识符
+ * @param frame_id 对象的参考坐标系
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::remove_kfs_collision(
     const std::string& object_id, 
     const std::string& frame_id
@@ -612,29 +799,42 @@ bool RoboticTask::remove_kfs_collision(
     collision_object.header.frame_id = frame_id;
     collision_object.id = object_id;
     collision_object.operation = collision_object.REMOVE;
+    
+    // 从规划场景移除碰撞对象
     psi->applyCollisionObject(collision_object);
     return true;
 }
 
 
-
+/**
+ * @brief 设置气泵启用/禁用状态。
+ * 
+ * 通过在驱动节点上设置'enable_air_pump'参数来控制气泵（吸盘）。
+ * 包含重试机制以提高可靠性。
+ * 
+ * @param enable true启用气泵，false禁用气泵
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::set_air_pump(bool enable){
-    RCLCPP_INFO(node->get_logger(), "设置气泵参数： %s", enable ? "开启" : "关闭");
+    RCLCPP_INFO(node->get_logger(), "设置气泵参数: %s", enable ? "开启" : "关闭");
 
+    // 检查驱动节点是否可用
     auto node_names = node->get_node_names();
     if(std::find(node_names.begin(), node_names.end(), "/driver_node") == node_names.end()){
-        RCLCPP_ERROR(node->get_logger(), "没有气泵驱动节点");
+        RCLCPP_ERROR(node->get_logger(), "未找到气泵驱动节点");
         return false;
     }
 
+    // 为驱动节点创建参数客户端
     auto temp_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "/driver_node");
 
+    // 等待服务可用
     if(!temp_client->wait_for_service(1s)){
-        RCLCPP_ERROR(node->get_logger(), "driver_node 参数不可用 ");
+        RCLCPP_ERROR(node->get_logger(), "驱动节点参数服务不可用");
         return false;
     }
 
-    // 添加重试机制
+    // 添加重试机制以提高可靠性
     const int max_retries = 3;
     for (int retry = 0; retry < max_retries; ++retry) {
         auto future = temp_client->set_parameters({
@@ -654,13 +854,14 @@ bool RoboticTask::set_air_pump(bool enable){
                 RCLCPP_INFO(node->get_logger(), "气泵设置成功");
                 return true;
             } else {
-                RCLCPP_ERROR(node->get_logger(), "设置失败： %s，重试 %d/%d", 
+                RCLCPP_ERROR(node->get_logger(), "设置失败: %s，重试 %d/%d", 
                              first_result.reason.c_str(), retry + 1, max_retries);
             }
         } catch (const std::exception& e){
-            RCLCPP_ERROR(node->get_logger(), "设置失败： %s，重试 %d/%d", e.what(), retry + 1, max_retries);
+            RCLCPP_ERROR(node->get_logger(), "设置失败: %s，重试 %d/%d", e.what(), retry + 1, max_retries);
         }
         
+        // 重试前等待（最后一次尝试除外）
         if (retry < max_retries - 1) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -670,13 +871,23 @@ bool RoboticTask::set_air_pump(bool enable){
     return false;
 }
 
+
+/**
+ * @brief 验证气泵状态是否匹配期望值。
+ * 
+ * 通过从驱动节点读取'enable_air_pump'参数来检查实际的气泵状态。
+ * 这有助于确保气泵正确响应了命令。
+ * 
+ * @param expected_status 期望的气泵状态
+ * @return 如果状态匹配返回true，否则返回false
+ */
 bool RoboticTask::verify_air_pump_status(bool expected_status) {
-    // 检查气泵实际状态
+    // 创建参数客户端检查气泵状态
     auto temp_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "/driver_node");
     
     if(!temp_client->wait_for_service(1s)) {
         RCLCPP_WARN(node->get_logger(), "无法连接到驱动节点验证气泵状态");
-        return true; // 假设成功，避免阻塞
+        return true; // 假设成功以避免阻塞
     }
     
     auto future = temp_client->get_parameters({"enable_air_pump"});
@@ -691,11 +902,24 @@ bool RoboticTask::verify_air_pump_status(bool expected_status) {
         RCLCPP_WARN(node->get_logger(), "获取气泵状态异常: %s", e.what());
     }
     
-    return true; // 默认返回成功
+    return true; // 默认返回成功以避免阻塞
 }
 
+
+/**
+ * @brief 验证抓取操作是否成功。
+ * 
+ * 通过检查各种指标来验证抓取操作的成功：
+ * - 关节电流变化（表示接触力）
+ * - 真空传感器状态（如果可用）
+ * - 末端执行器负载变化
+ * 
+ * 当前实现基于延迟的简单验证，但可以用更复杂的传感器扩展。
+ * 
+ * @return 如果抓取成功返回true，否则返回false
+ */
 bool RoboticTask::verify_grasp_success() {
-    // 可以通过以下方式验证抓取：
+    // 可以通过多种方式验证抓取：
     // 1. 检查关节电流变化
     // 2. 检查真空传感器（如果有）
     // 3. 检查末端执行器负载
@@ -703,20 +927,35 @@ bool RoboticTask::verify_grasp_success() {
     // 简单实现：等待一段时间后检查系统状态
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     
-    // 这里可以添加更多验证逻辑
-    // 例如检查关节负载、真空度等
+    // TODO: 添加更复杂的验证逻辑
+    // 例如：检查关节负载、真空度等
     RCLCPP_INFO(node->get_logger(), "抓取验证完成");
     return true;
 }
 
-// 获取关节位置
+
+/**
+ * @brief 获取当前关节位置。
+ * 
+ * 返回当前关节位置向量，该向量由关节状态订阅器持续更新。
+ * 
+ * @return 当前关节位置向量
+ */
 Eigen::VectorXd RoboticTask::get_joint_position() const {
     return joint_position;
 }
 
-// 关节状态回调函数
+
+/**
+ * @brief 关节状态更新的回调函数。
+ * 
+ * 当接收到新的关节状态数据时调用。使用最新的关节角度更新
+ * joint_position向量，用于运动规划和控制。
+ * 
+ * @param msg 关节状态消息的共享指针
+ */
 void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg) {
-    // 更新关节位置
+    // 从消息更新关节位置
     if (msg->joints.size() >= 6) {
         for (size_t i = 0; i < 6 && i < msg->joints.size(); ++i) {
             joint_position(i) = msg->joints[i].rad;
@@ -724,9 +963,19 @@ void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedP
     }
 }
 
+
 // ==================== 状态机相关函数实现 ====================
 
-// 执行移动任务
+/**
+ * @brief 执行移动任务。
+ * 
+ * 通过转换以下状态来执行简单的移动任务：
+ * 1. 移动到预备抓取点
+ * 2. 移动到抓取点
+ * 3. 返回空闲状态
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::execute_move_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行移动任务");
     
@@ -740,7 +989,21 @@ bool RoboticTask::execute_move_task() {
     return handle_idle_state();
 }
 
-// 执行抓取任务
+
+/**
+ * @brief 执行抓取任务。
+ * 
+ * 通过转换所有必要的状态来执行完整的抓取序列：
+ * 1. 移动到预备抓取点
+ * 2. 移动到抓取点
+ * 3. 抓取目标（激活气泵）
+ * 4. 移动到释放点
+ * 5. 释放目标（停用气泵）
+ * 6. 移动到空闲点
+ * 7. 返回空闲状态
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::execute_catch_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行抓取任务");
     
@@ -766,7 +1029,15 @@ bool RoboticTask::execute_catch_task() {
     return handle_idle_state();
 }
 
-// 执行放置任务
+
+/**
+ * @brief 执行放置任务。
+ * 
+ * 执行与抓取相同的状态序列的放置任务，
+ * 但释放点计算逻辑不同。
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::execute_place_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行放置任务");
     
@@ -793,7 +1064,17 @@ bool RoboticTask::execute_place_task() {
     return handle_idle_state();
 }
 
+
 // 状态处理函数
+
+/**
+ * @brief 处理空闲状态。
+ * 
+ * 管理机器人等待新任务的空闲状态。
+ * 更新反馈并执行最小处理。
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_idle_state() {
     RCLCPP_INFO(node->get_logger(), "处理空闲状态");
     update_feedback();
@@ -801,6 +1082,17 @@ bool RoboticTask::handle_idle_state() {
     return true;
 }
 
+
+/**
+ * @brief 处理移动到预备抓取点状态。
+ * 
+ * 将机器人移动到预备抓取位置，该位置为实际抓取操作提供良好的可见性
+ * 和接近角度。
+ * 
+ * TODO: 实现实际的运动规划逻辑
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_move_to_ready_catch_point() {
     RCLCPP_INFO(node->get_logger(), "处理移动到预备抓取位置状态");
     update_feedback();
@@ -836,12 +1128,24 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     return !cancle_current_task.load();
 }
 
+
+/**
+ * @brief 处理移动到抓取点状态。
+ * 
+ * 将机器人从预备位置移动到实际抓取位置。
+ * 这需要更精确的定位，可能使用视觉伺服
+ * 进行最终接近。
+ * 
+ * TODO: 使用视觉伺服实现精细路径规划
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_move_to_catch_point() {
     RCLCPP_INFO(node->get_logger(), "处理移动到抓取位置状态");
     update_feedback();
     
     // ========================================
-    // 📍 实现位置2: 移动到抓取位置的路径规划
+    // 实现位置2: 移动到抓取位置的路径规划
     // ========================================
     // 需要实现的具体内容:
     // 1. 使用 calculate_target_pose() 计算精确抓取位置
@@ -870,57 +1174,84 @@ bool RoboticTask::handle_move_to_catch_point() {
     return !cancle_current_task.load();
 }
 
+
+/**
+ * @brief 处理抓取目标状态。
+ * 
+ * 通过以下方式执行实际抓取操作：
+ * 1. 为目标添加碰撞对象
+ * 2. 等待机械臂稳定
+ * 3. 激活气泵（吸力）
+ * 4. 验证气泵状态
+ * 5. 添加附加碰撞对象（模拟携带的物体）
+ * 6. 验证抓取成功
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_catch_target() {
     RCLCPP_INFO(node->get_logger(), "处理抓取目标状态");
     update_feedback();
     
-    // 添加碰撞对象
+    // 为目标向规划场景添加碰撞对象
     add_kfs_collision(task_target_pos, "target_kfs", move_group_interface->getPlanningFrame());
     
     // 等待稳定，确保机械臂已到达抓取位置
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     
-    // 开启气泵并验证
+    // 激活气泵并验证
     if(!set_air_pump(true)) {
-        RCLCPP_ERROR(node->get_logger(), "开启气泵失败");
+        RCLCPP_ERROR(node->get_logger(), "激活气泵失败");
         return false;
     }
     
     // 验证气泵状态（如果硬件支持）
     if(!verify_air_pump_status(true)) {
-        RCLCPP_WARN(node->get_logger(), "气泵状态验证失败，尝试重新开启");
+        RCLCPP_WARN(node->get_logger(), "Air pump status verification failed, attempting retry");
         if(!set_air_pump(true)) {
-            RCLCPP_ERROR(node->get_logger(), "气泵重新开启失败");
+            RCLCPP_ERROR(node->get_logger(), "气泵重新激活失败");
             return false;
         }
     }
     
-    // 等待气泵建立真空
+    // 等待真空建立
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
     
-    // 添加附加碰撞对象（表示已抓取）
+    // 添加附加碰撞对象（表示携带的物体）
     add_attached_kfs_collision();
     
     // 验证抓取是否成功
     if(!verify_grasp_success()) {
         RCLCPP_WARN(node->get_logger(), "抓取验证失败，可能未成功抓取目标");
-        // 可以选择重试或继续执行
+        // 可以选择重试或继续
     }
     
     return !cancle_current_task.load();
 }
 
+
+/**
+ * @brief 处理移动到释放点状态。
+ * 
+ * 将携带物体的机器人移动到释放位置。
+ * 释放位置取决于任务类型：
+ * - 抓取任务：释放到车辆
+ * - 放置任务：释放到指定位置
+ * 
+ * TODO: 实现释放位置计算和路径规划
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_move_to_release_point() {
     RCLCPP_INFO(node->get_logger(), "处理移动到释放位置状态");
     update_feedback();
     
     // ========================================
-    // 📍 实现位置3: 移动到释放位置的路径规划
+    // 实现位置3: 移动到释放位置的路径规划
     // ========================================
     // 需要实现的具体内容:
-    // 1. 根据任务类型计算释放位置（车上或指定位置）
-    // 2. 对于抓取任务：计算车辆上的释放位置
-    // 3. 对于放置任务：计算目标放置位置
+    // 1. 根据任务类型计算释放位置
+    // 2. 对于抓取任务：计算车辆释放位置
+    // 3. 对于放置任务：使用任务目标作为释放位置
     // 4. 考虑携带物体时的碰撞检测
     // 5. 实现安全的释放路径规划
     // 6. 添加释放前的位置确认
@@ -951,29 +1282,42 @@ bool RoboticTask::handle_move_to_release_point() {
     return !cancle_current_task.load();
 }
 
+
+/**
+ * @brief 处理释放目标状态。
+ * 
+ * 通过以下方式执行释放操作：
+ * 1. 停用气泵（释放吸力）
+ * 2. 验证气泵已关闭
+ * 3. 等待完全释放
+ * 4. 移除附加碰撞对象
+ * 5. 移除目标碰撞对象
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_release_target() {
     RCLCPP_INFO(node->get_logger(), "处理释放目标状态");
     update_feedback();
     
-    // 关闭气泵
+    // 停用气泵
     if(!set_air_pump(false)) {
-        RCLCPP_ERROR(node->get_logger(), "关闭气泵失败");
+        RCLCPP_ERROR(node->get_logger(), "停用气泵失败");
         return false;
     }
     
-    // 验证气泵是否真正关闭
+    // 验证气泵确实已关闭
     if(!verify_air_pump_status(false)) {
-        RCLCPP_WARN(node->get_logger(), "气泵状态验证失败，尝试重新关闭");
+        RCLCPP_WARN(node->get_logger(), "Air pump status verification failed, attempting retry");
         if(!set_air_pump(false)) {
-            RCLCPP_ERROR(node->get_logger(), "气泵重新关闭失败");
+            RCLCPP_ERROR(node->get_logger(), "气泵重新停用失败");
             return false;
         }
     }
     
-    // 等待气泵完全释放
+    // 等待完全释放
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     
-    // 移除附加碰撞对象
+    // Remove attached collision object
     remove_attached_kfs_collision();
     
     // 移除碰撞对象
@@ -984,12 +1328,23 @@ bool RoboticTask::handle_release_target() {
     return !cancle_current_task.load();
 }
 
+
+/**
+ * @brief 处理移动到空闲点状态。
+ * 
+ * 将机器人移动到任务完成后的安全空闲位置。
+ * 这通常是机器人的初始位置或静止位置。
+ * 
+ * TODO: 实现安全的空闲位置计算和路径规划
+ * 
+ * @return 如果成功返回true，否则返回false
+ */
 bool RoboticTask::handle_move_to_idle_point() {
     RCLCPP_INFO(node->get_logger(), "处理移动到空闲位置状态");
     update_feedback();
     
     // ========================================
-    // 📍 实现位置4: 移动到空闲位置的路径规划
+    // 实现位置4: 移动到空闲位置的路径规划
     // ========================================
     // 需要实现的具体内容:
     // 1. 定义安全的空闲位置（通常为机械臂的初始位置）
@@ -1022,12 +1377,28 @@ bool RoboticTask::handle_move_to_idle_point() {
     return !cancle_current_task.load();
 }
 
-// 辅助函数
+
+// 状态机工具函数
+
+/**
+ * @brief 转换到新状态。
+ * 
+ * 更新当前状态并记录转换用于调试。
+ * 
+ * @param new_state 要转换到的新状态
+ */
 void RoboticTask::transition_to_state(ArmTaskState new_state) {
     current_state.store(new_state);
     RCLCPP_INFO(node->get_logger(), "状态转换到: %s", get_state_description(new_state).c_str());
 }
 
+
+/**
+ * @brief 使用当前状态更新动作反馈。
+ * 
+ * 向动作客户端发送包含当前状态
+ * 和描述的反馈，以保持客户端了解进度。
+ */
 void RoboticTask::update_feedback() {
     if(current_goal_handle) {
         auto feedback_msg = std::make_shared<robot_interfaces::action::Catch::Feedback>();
@@ -1037,6 +1408,13 @@ void RoboticTask::update_feedback() {
     }
 }
 
+
+/**
+ * @brief 将任务状态重置为初始条件。
+ * 
+ * 重置所有任务相关变量和标志，为
+ * 下一个任务执行做准备。
+ */
 void RoboticTask::reset_task_state() {
     RCLCPP_INFO(node->get_logger(), "重置任务状态");
     current_state.store(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
@@ -1049,6 +1427,16 @@ void RoboticTask::reset_task_state() {
     }
 }
 
+
+/**
+ * @brief 获取状态的描述字符串。
+ * 
+ * 将状态枚举值转换为人类可读的字符串
+ * 用于记录和调试目的。
+ * 
+ * @param state 要获取描述的状态
+ * @return 状态的字符串描述
+ */
 std::string RoboticTask::get_state_description(ArmTaskState state) {
     switch(state) {
         case ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE:
@@ -1067,6 +1455,20 @@ std::string RoboticTask::get_state_description(ArmTaskState state) {
             return "释放目标";
         case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT:
             return "移动到空闲位置";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_ONE:
+            return "移动到预备抓取位置（KFS = 1）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_TWO:
+            return "移动到预备抓取位置（KFS = 2）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_THREE:
+            return "移动到预备抓取位置（KFS = 3）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_ZERO:
+            return "移动到释放位置（KFS = 0）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_ONE:
+            return "移动到释放位置（KFS = 1）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_TWO:
+            return "移动到释放位置（KFS = 2）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_IN_SHELF:
+            return "移动到释放位置（将kfs放到架子上）";
         default:
             return "未知状态";
     }
