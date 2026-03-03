@@ -127,7 +127,11 @@ namespace robotic_task {
             );
 
             int count ; // 用于循环重试的数量表示
+            const int MAX_COUNT = 100; // 表示最大重试次数
 
+
+            const double VELOCITY_SCALING = 0.4; // 最大速度缩放因子
+            const double ACCELERATION_SCALING = 0.3; // 最大加速度缩放因子
 
             void arm_catch_task_handle();
 
@@ -222,8 +226,6 @@ namespace robotic_task {
             */
             bool verify_grasp_success();
 
-            const double VELOCITY_SCALING = 0.4;
-            const double ACCELERATION_SCALING = 0.3;
 
 
             /**
@@ -266,8 +268,8 @@ namespace robotic_task {
                 int mode
             );
 
-            int count;
-            const int MAX_COUNT = 100;
+            
+            
 
             // ======================================= 头文件接口 =======================================
             // 五次多项式接口

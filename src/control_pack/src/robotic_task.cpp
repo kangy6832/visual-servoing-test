@@ -474,7 +474,7 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
     Eigen::Vector3d surface_position = object_center + object_half_size * surface_normal;
     RCLCPP_INFO(node->get_logger(), "表面位置 = (%f, %f, %f)", surface_position.x(), surface_position.y(), surface_position.z());
 
-    const double inside_offset = 0.05;  // 抓取的内部偏移
+    const double inside_offset = 0.02;  // 抓取的内部偏移
     const double outside_offset = 0.05;  // 接近的外部偏移
 
     Eigen::Vector3d grasp_position = surface_position - inside_offset * surface_normal;
@@ -1114,6 +1114,7 @@ bool RoboticTask::handle_idle_state() {
  * 
  * 将机器人移动到预备抓取位置，该位置为实际抓取操作提供良好的可见性
  * 和接近角度。
+ * 只移动到预抓取位置，后续抓取实现由视觉伺服实现
  * 
  * TODO: 实现实际的运动规划逻辑
  * 
@@ -1144,10 +1145,16 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     
     // TODO: 添加路径规划逻辑
-    // auto success = move_group_interface->plan(plan);
-    // if (success == moveit::core::MoveItErrorCode::SUCCESS) {
-    //     move_group_interface->execute(plan);
-    // }
+    count = 0 ;
+    auto success = move_group_interface->plan(plan);
+    do{
+        success = move_group_interface->plan(plan);
+        count ++;
+    } while (success != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+    
+    if (success == moveit::core::MoveItErrorCode::SUCCESS) {
+        move_group_interface->execute(plan);
+    }
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
