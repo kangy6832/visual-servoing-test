@@ -567,7 +567,7 @@ namespace RobotKinematicsKDL {
              * @return 6×n 雅克比矩阵
              * @throws DimensionMismatchException 维度不匹配
              */
-            Eigen::MatrixXd computeJacobian(const Eigen::VectorXd& joint_positions);
+            Eigen::MatrixXd computeJacobian(const Eigen::VectorXd& joint_positions) const;
 
             /**
              * @brief 计算雅克比矩阵的导数
@@ -578,7 +578,7 @@ namespace RobotKinematicsKDL {
             Eigen::MatrixXd computeJacobianDerivative(
                 const Eigen::VectorXd& joint_positions, 
                 const Eigen::VectorXd& joint_velocities
-            );
+            ) const;
 
 
             // ============================================================
@@ -607,7 +607,7 @@ namespace RobotKinematicsKDL {
             Eigen::VectorXd inverseVelocityKinematics(
                 const Eigen::VectorXd& joint_positions, 
                 const CartesianTwist& desired_velocity
-            );
+            ) const;
 
             /**
              * @brief 使用阻尼最小二乘法计算逆速度
@@ -767,8 +767,8 @@ namespace RobotKinematicsKDL {
             mutable KDL::Jacobian kdl_jacobian_;  // KDL::Jacobian 表示雅克比矩阵
 
             // Eigen数据容器
-            Eigen::MatrixXd last_jacobian_;
-            Eigen::MatrixXd last_jacobian_dot_; // 缓存上一时刻的雅克比矩阵及其导数
+            mutable Eigen::MatrixXd last_jacobian_;
+            mutable Eigen::MatrixXd last_jacobian_dot_; // 缓存上一时刻的雅克比矩阵及其导数
 
             // 配置
             JointLimits joint_limits_;

@@ -74,57 +74,92 @@ namespace robotic_task {
         
         private:
 
+            // 接近模式枚举：定义接近目标的方式（自动或指定位置模式）
             enum class ApproachMode {
                 AUTO, 
                 POS
             };
 
+            // 操作成功标志
             bool success;
+            // ROS2节点共享指针，用于通信和资源管理
             rclcpp::Node::SharedPtr node;
             
+            // 任务互斥锁，用于线程安全访问任务状态
             std::mutex task_mutex_;
+            // 任务条件变量，用于线程间任务通知
             std::condition_variable task_cv_;
+            // 新任务标志，表示是否有新的任务需要处理
             bool has_new_task_{false};
 
+            // 异步参数客户端，用于与驱动节点通信获取/设置参数
             rclcpp::AsyncParametersClient::SharedPtr param_client;
+            // 当前动作目标句柄，用于管理抓取动作的执行
             std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>> current_goal_handle;
+            // 机器人模型常量指针，用于运动学计算
             moveit::core::RobotModelConstPtr robot_module;
+            // 机械臂任务执行线程
             std::unique_ptr<std::thread> arm_task_thread;
+            // 任务目标位置和姿态
             geometry_msgs::msg::Pose task_target_pos;
+            // 机械臂任务运行标志（原子变量，线程安全）
             std::atomic<bool> is_running_arm_task{false};
+            // 当前任务类型（原子变量：0=移动, 1=抓取, 2=放置）
             std::atomic<bool> current_task_type{0}; // 任务类型
+            // 当前KFS编号（运动反馈系统编号）
             std::atomic<int> current_kfs_num{0};
+            // 取消当前任务标志
             std::atomic<bool> cancle_current_task{false};
+            // 当前状态（原子变量，使用ArmTaskState枚举）
             std::atomic<int> current_state{ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE}; // 当前状态
+            // 相机到link0的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
+            // 相机到link0的坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_lisenter_;
+            // link5到点的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> link5_point_tf_buffer;
+            // link5到点的坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> link5_point_tf_lisenter_;
+            // 相机到link0的坐标变换数据
             geometry_msgs::msg::TransformStamped camera_link0_tf;
+            // link5到点的坐标变换数据
             geometry_msgs::msg::TransformStamped link5_point_tf;
+            // link4到link5的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
+            // 通用坐标变换缓冲区
             std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+            // 通用坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
 
+            // MoveIt运动规划接口，用于规划和执行机械臂运动
             std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
 
+            // 可视化标记发布器，用于在RViz中显示目标位置等
             rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr mark_pub_;
 
+            // 附加的KFS位置（相对于link6，用于碰撞检测）
             geometry_msgs::msg::Pose attached_kfs_pos;
 
+            // 规划场景接口，用于添加/删除碰撞对象等场景管理
             std::shared_ptr<moveit::planning_interface::PlanningSceneInterface> psi; // planning_scene_interface,用于操作场景,包括添加、删除、更新等
 
+            // 处理动作目标的响应函数
             rclcpp_action::GoalResponse handle_goal(
                 const rclcpp_action::GoalUUID& uuid, 
                 std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal
             );
+            // 处理动作取消的响应函数
             rclcpp_action::CancelResponse cancel_goal(
                 const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
+            // 处理接受的动作目标的函数
             void handle_accepted(
                 const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
+
+
+            
 
             int count ; // 用于循环重试的数量表示
             const int MAX_COUNT = 100; // 表示最大重试次数
@@ -132,6 +167,8 @@ namespace robotic_task {
 
             const double VELOCITY_SCALING = 0.4; // 最大速度缩放因子
             const double ACCELERATION_SCALING = 0.3; // 最大加速度缩放因子
+            const double MAX_END_EFFECTOR_VELOCITY = 1.0; // 最大末端执行器速度 [m/s]
+            const double MAX_END_EFFECTOR_ACCELERATION = 1.0; // 最大末端执行器加速度 [m/s^2]
 
             void arm_catch_task_handle();
 
@@ -273,11 +310,13 @@ namespace robotic_task {
 
             // ======================================= 头文件接口 =======================================
             // 五次多项式接口
-            RobotPosePolynomial::QuinticParam Quintic;
-            RobotPosePolynomial::ContinuousTrajectory Trajectory;
+            RobotPosePolynomial::QuinticParam robot_pose_polynomial_QuinticParam;
+            RobotPosePolynomial::ContinuousTrajectory robot_pose_polynomial_ContinuousTrajectory;
 
-            // 速度逆解器
-            RobotKinematicsKDL::RobotArmKinematics robot_kinematics;
+            //  六维空间速度向量（Twist）
+            RobotKinematicsKDL::CartesianTwist velocity_ik_generator_CartesianTwist;
+            // 基于KDL和Eigen的机械臂运动学计算类
+            RobotKinematicsKDL::RobotArmKinematics velocity_ik_generator_RobotArmKinematics;
 
             // 末端速度
             Eigen::Vector3d end_effector_velocity;

@@ -377,7 +377,7 @@ namespace RobotKinematicsKDL{
 
     Eigen::MatrixXd RobotArmKinematics::computeJacobian(
         const Eigen::VectorXd& joint_positions
-    ){
+    ) const {
         validateInput(joint_positions, "computeJacobian");
         checkFinite(joint_positions, "joint_positions");
 
@@ -409,7 +409,7 @@ namespace RobotKinematicsKDL{
     Eigen::MatrixXd RobotArmKinematics::computeJacobianDerivative(
         const Eigen::VectorXd& joint_positions, 
         const Eigen::VectorXd& joint_velocities
-    ){
+    ) const {
         validateInput(joint_positions, "computeJacobianDerivative:positions");
         validateInput(joint_velocities, "computeJacobianDerivate:velocities");
         checkFinite(joint_positions, "joint_positions");
@@ -474,8 +474,8 @@ namespace RobotKinematicsKDL{
 
     Eigen::VectorXd RobotArmKinematics::inverseVelocityKinematics(
         const Eigen::VectorXd& joint_positions, 
-        const CartesianTwist& desired_velocity
-    ){
+        const CartesianTwist& desired_velocity // 
+    ) const {
         validateInput(joint_positions, "inverseVelocityKinematics");
         checkFinite(joint_positions, "joint_positions");
 

@@ -1080,6 +1080,9 @@ bool RoboticTask::handle_idle_state() {
     update_feedback();
 
     // 设置关节角度
+    //**
+    // 索引一：设置开始前的空闲位置。
+    //*/
     Eigen::VectorXd idle_joints(6);
     idle_joints << 0.0, 0.8726646259971648, 2.1816615649929116, 2.2514747350725445, 0.0, 0.0;
     std::vector<double> idle_joints_vec(idle_joints.data(), idle_joints.data() + idle_joints.size());
@@ -1116,7 +1119,6 @@ bool RoboticTask::handle_idle_state() {
  * 和接近角度。
  * 只移动到预抓取位置，后续抓取实现由视觉伺服实现
  * 
- * TODO: 实现实际的运动规划逻辑
  * 
  * @return 如果成功返回true，否则返回false
  */
@@ -1144,7 +1146,6 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     move_group_interface->setPoseTarget(prepare_pose);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     
-    // TODO: 添加路径规划逻辑
     count = 0 ;
     auto success = move_group_interface->plan(plan);
     do{
@@ -1195,12 +1196,11 @@ bool RoboticTask::handle_move_to_catch_point() {
     );
     
     // 使用计算出的抓取位置而不是预备位置
-    move_group_interface->setPoseTarget(grasp_pose);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    // TODO 基于速度控制实现视觉伺服
+    /**
+     * @brief 调用calculate_end_effector_velocity  calculate_joint_velocity
+     */
     
-    // TODO: 添加精细路径规划逻辑
-    // 可能需要使用视觉伺服进行最终定位
-    // 考虑使用更小的步进接近目标
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
@@ -1459,6 +1459,57 @@ void RoboticTask::reset_task_state() {
         is_running_arm_task = false;
     }
 }
+
+/**
+ * @brief 构建末端速度向量
+ * 
+ * 末端线速度和与目标距离成正比
+ * 末端角速度为末端角速度为0
+ *
+ * TODO:更好的速度计算函数
+ *
+ */
+void RoboticTask::calculate_end_effector_velocity(
+    double x, 
+    double y,
+    double z
+){
+    velocity_ik_generator_CartesianTwist.linear = Eigen::Vector3d(
+        std::min(x, MAX_END_EFFECTOR_VELOCITY), 
+        std::min(y, MAX_END_EFFECTOR_VELOCITY), 
+        std::min(z, MAX_END_EFFECTOR_VELOCITY)
+    );
+    velocity_ik_generator_CartesianTwist.angular = Eigen::Vector3d::Zero();
+    end_effector_velocity.x() = velocity_ik_generator_CartesianTwist.linear.x();
+    end_effector_velocity.y() = velocity_ik_generator_CartesianTwist.linear.y();
+    end_effector_velocity.z() = velocity_ik_generator_CartesianTwist.linear.z();
+}
+
+/**
+ * @brief 由末端速度计算关节速度
+ * 
+ * 调用jointStateCallback获取最新joint_position
+ * 调用 velocity_ik_generator_RobotArmKinematics 中的 inverseVelocityKinematics
+ * 
+ */
+Eigen::VectorXd RoboticTask::calculate_joint_velocity(
+    const Eigen::Vector3d& end_effector_velocity
+) const {
+    // 获取当前关节位置
+    Eigen::VectorXd joint_positions = get_joint_position();
+    
+    // 构造末端速度Twist（只有线速度，角速度为零）
+    RobotKinematicsKDL::CartesianTwist desired_twist;
+    desired_twist.linear = end_effector_velocity;
+    desired_twist.angular = Eigen::Vector3d::Zero();
+    
+    // 调用逆速度运动学计算关节速度
+    return velocity_ik_generator_RobotArmKinematics.inverseVelocityKinematics(
+        joint_positions, 
+        desired_twist
+    );
+}
+
 
 
 /**
