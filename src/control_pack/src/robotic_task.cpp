@@ -1099,9 +1099,6 @@ bool RoboticTask::execute_catch_task() {
     
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
     if(!handle_move_to_idle_point()) return false;
-    
-    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
-    return handle_idle_state();
 }
 
 
@@ -1736,18 +1733,8 @@ std::string RoboticTask::get_state_description(ArmTaskState state) {
             return "释放目标";
         case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT:
             return "移动到空闲位置";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_ONE:
-            return "移动到预备抓取位置（KFS = 1）";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_TWO:
-            return "移动到预备抓取位置（KFS = 2）";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_THREE:
-            return "移动到预备抓取位置（KFS = 3）";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_ZERO:
-            return "移动到释放位置（KFS = 0）";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_ONE:
-            return "移动到释放位置（KFS = 1）";
-        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_KFS_TWO:
-            return "移动到释放位置（KFS = 2）";
+        case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT_KFS_NOT_ZERO:
+            return "移动到预备抓取位置（KFS != 0）";
         case ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_RELEASE_POINT_IN_SHELF:
             return "移动到释放位置（将kfs放到架子上）";
         default:
