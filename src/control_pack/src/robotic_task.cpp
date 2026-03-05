@@ -1287,6 +1287,84 @@ bool RoboticTask::handle_move_to_catch_point() {
     return !cancle_current_task.load();
 }
 
+/**
+ * @brief 处理抓取车上物块
+ * 
+ * 根据current_kfs_num设置抓取点
+ *
+ * TODO: 实现抓取车上物块的逻辑,实际应用中的抓取位置
+ */
+bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
+    switch (current_kfs_num.load()) {
+        case 0:
+            RCLCPP_ERROR(node->get_logger(), "KFS == 0, 没有KFS可供 抓取");
+            break;
+        case 1:
+            {
+            Eigen::VectorXd kfs1_touch_pos(6);
+            kfs1_touch_pos << -0.087266463, 0.174532925, 4.677482396, -0.122173048, -0.017453293, 0.000000000;
+            std::vector<double> kfs1_touch_pos_vec(kfs1_touch_pos.data(), kfs1_touch_pos.data() + kfs1_touch_pos.size());
+            move_group_interface->setJointValueTarget(kfs1_touch_pos_vec);
+            moveit::planning_interface::MoveGroupInterface::Plan plan;
+            count = 0;
+            auto error_code = move_group_interface->plan(plan);
+            do{
+                error_code = move_group_interface->plan(plan);
+                count ++ ;
+            } while (error_code != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+
+            if(error_code != moveit::core::MoveItErrorCode::SUCCESS){
+                RCLCPP_ERROR(node->get_logger(), "抓取车上物块路径规划失败");
+                return false;
+            }
+
+            do {
+                move_group_interface->execute(plan);
+            }while (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+
+            return true;
+
+            break;
+            }
+        case 2:
+            {
+            Eigen::VectorXd kfs2_touch_pos(6);
+            kfs2_touch_pos << -0.087266463, 0.296705972, 3.769911185, 0.645771823, -0.087266463, 0.000000000;
+            std::vector<double> kfs2_touch_pos_vec(kfs2_touch_pos.data(), kfs2_touch_pos.data() + kfs2_touch_pos.size());
+            move_group_interface->setJointValueTarget(kfs2_touch_pos_vec);
+            moveit::planning_interface::MoveGroupInterface::Plan plan;
+            count = 0;
+            auto error_code = move_group_interface->plan(plan);
+            do{
+                error_code = move_group_interface->plan(plan);
+                count ++ ;
+            } while (error_code != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+
+            if(error_code != moveit::core::MoveItErrorCode::SUCCESS){
+                RCLCPP_ERROR(node->get_logger(), "抓取车上物块路径规划失败");
+                return false;
+            }
+
+            do {
+                move_group_interface->execute(plan);
+            }while (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+
+            return true;
+            break;
+            }
+        case 3:
+            {
+            return true;
+            break;
+            }
+        default:
+            RCLCPP_ERROR(node->get_logger(), "Invalid current_kfs_num: %d", current_kfs_num.load());
+            return false;
+    }
+    
+    return true;
+}
+
 
 /**
  * @brief 处理抓取目标状态。

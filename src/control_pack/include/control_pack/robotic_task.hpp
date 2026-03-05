@@ -473,6 +473,7 @@ namespace robotic_task {
             bool execute_catch_task();
 
 
+
             /**
             * @brief 执行放置任务
             * 
@@ -515,6 +516,7 @@ namespace robotic_task {
             * @return 状态处理成功返回true，失败返回false
             */
             bool handle_move_to_catch_point();
+            bool handle_move_to_catch_point_kfs_not_zero();
 
 
             /**
