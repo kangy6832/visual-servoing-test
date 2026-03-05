@@ -1400,7 +1400,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
 
                 if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
-                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    RCLCPP_ERROR(node->get_logger(), "规划到KFS1释放位置失败");
                     return false;
                 }
                 do{
@@ -1431,7 +1431,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
 
                 if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
-                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    RCLCPP_ERROR(node->get_logger(), "规划到KFS2释放位置失败");
                     return false;
                 }
                 do{
@@ -1462,7 +1462,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
 
                 if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
-                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    RCLCPP_ERROR(node->get_logger(), "规划到KFS3释放位置失败");
                     return false;
                 }
                 do{
@@ -1571,20 +1571,35 @@ bool RoboticTask::handle_move_to_idle_point() {
     
     // 当前占位符实现:
     // 定义空闲位置（可根据实际机械臂调整）
-    geometry_msgs::msg::Pose idle_pose;
-    idle_pose.position.x = 0.0;
-    idle_pose.position.y = 0.0;
-    idle_pose.position.z = 0.5;
-    idle_pose.orientation.x = 0.0;
-    idle_pose.orientation.y = 0.0;
-    idle_pose.orientation.z = 0.0;
-    idle_pose.orientation.w = 1.0;
-    
-    move_group_interface->setPoseTarget(idle_pose);
+
+    //**
+    // 检索三：运行中的空闲位置
+    //*/
+
+    Eigen::VectorXd idle_joint_positions(6);
+    idle_joint_positions << 0.0, 1.064650844, 0.087266463, -1.989675347, 0.0, 0.0;
+    std::vector<double> idle_joint_values(idle_joint_positions.data(), idle_joint_positions.data() + idle_joint_positions.size());
+    move_group_interface->setJointValueTarget(idle_joint_values);
+
     moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+    count = 0 ;
+    do{
+        error_code = move_group_interface->plan(plan);
+        count++;
+    } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+
+    if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS){
+        RCLCPP_ERROR(node->get_logger(), "运行中的空闲位置失败");
+        return false;
+    }
+
+    do{
+        move_group_interface->execute(plan);
+    } while (move_group_interface->execute(plan) != moveit::planning_interface::MoveItErrorCode::SUCCESS);
     
-    // TODO: 添加空闲位置路径规划逻辑
-    // 可能使用命名关节位置而不是笛卡尔位置
+    // TODO: 执行路径规划并执行
     // 确保所有关节都在安全范围内
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));

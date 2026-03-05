@@ -110,6 +110,7 @@ namespace robotic_task {
             
             // 当前KFS编号（运动反馈系统编号）
             std::atomic<int> current_kfs_num{0};
+
             // 取消当前任务标志
             std::atomic<bool> cancle_current_task{false};
             // 当前状态（原子变量，使用ArmTaskState枚举）
@@ -508,9 +509,6 @@ namespace robotic_task {
             * @return 状态处理成功返回true，失败返回false
             */
             bool handle_move_to_ready_catch_point();
-            bool handle_move_to_ready_catch_point_kfs_one();
-            bool handle_move_to_ready_catch_point_kfs_two();
-            bool handle_move_to_ready_catch_point_kfs_three();
 
 
             /**
