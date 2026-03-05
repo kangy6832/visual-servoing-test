@@ -104,8 +104,10 @@ namespace robotic_task {
             geometry_msgs::msg::Pose task_target_pos;
             // 机械臂任务运行标志（原子变量，线程安全）
             std::atomic<bool> is_running_arm_task{false};
+
             // 当前任务类型（原子变量：0=移动, 1=抓取, 2=放置）
             std::atomic<bool> current_task_type{0}; // 任务类型
+            
             // 当前KFS编号（运动反馈系统编号）
             std::atomic<int> current_kfs_num{0};
             // 取消当前任务标志
@@ -392,6 +394,17 @@ namespace robotic_task {
                 const Eigen::VectorXd& joint_velocity
             ) const;
 
+            /**
+            * @brief 发送关节速度命令到硬件驱动节点
+            * 
+            * 将计算出的关节速度通过ROS2话题发布给硬件驱动节点，
+            * 实现对机械臂的速度控制。
+            * 
+            * @param joint_velocities 要发送的关节速度向量
+            * @return 发送成功返回true，失败返回false
+            */
+            bool send_joint_velocity_to_hardware(const Eigen::VectorXd& joint_velocities);
+
 
             
 
@@ -408,6 +421,9 @@ namespace robotic_task {
 
             // 实现关节位置的实时更新
             rclcpp::Subscription<robot_interfaces::msg::Robot>::SharedPtr joint_state_subscriber_;
+
+            // 关节速度发布器，用于向硬件驱动节点发送速度命令
+            rclcpp::Publisher<robot_interfaces::msg::Robot>::SharedPtr joint_velocity_publisher_;
 
             /**
             * @brief 关节状态更新的回调函数

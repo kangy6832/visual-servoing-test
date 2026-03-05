@@ -98,6 +98,11 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
         std::bind(&RoboticTask::jointStateCallback, this, std::placeholders::_1)
     );
 
+    // 创建关节速度命令发布器，用于向硬件驱动节点发送速度控制指令
+    joint_velocity_publisher_ = node->create_publisher<robot_interfaces::msg::Robot>(
+        "joint_velocity_commands", 10
+    );
+
     // 创建可视化标记发布定时器（显示目标位置）
     node->create_wall_timer
     (
@@ -807,6 +812,44 @@ bool RoboticTask::remove_kfs_collision(
 
 
 /**
+ * @brief 发送关节速度命令到硬件驱动节点
+ * 
+ * 将计算出的关节速度通过ROS2话题发布给硬件驱动节点，
+ * 实现对机械臂的速度控制。
+ * 
+ * @param joint_velocities 要发送的关节速度向量
+ * @return 发送成功返回true，失败返回false
+ */
+bool RoboticTask::send_joint_velocity_to_hardware(const Eigen::VectorXd& joint_velocities) {
+    if (joint_velocities.size() != 6) {
+        RCLCPP_ERROR(node->get_logger(), "关节速度向量维度错误，期望6维，实际%zu维", joint_velocities.size());
+        return false;
+    }
+
+    // 创建ROS2消息
+    auto velocity_msg = std::make_shared<robot_interfaces::msg::Robot>();
+    
+    // 填充关节速度数据
+    // joints 是 std::array，大小固定为6，无需 resize
+    
+    for (int i = 0; i < 6; ++i) {
+        velocity_msg->joints[i].rad = joint_position[i];    // 当前位置
+        velocity_msg->joints[i].omega = joint_velocities[i]; // 目标速度
+    }
+    
+        
+    // 发布速度命令
+    joint_velocity_publisher_->publish(*velocity_msg);
+    
+    RCLCPP_DEBUG(node->get_logger(), "发送关节速度命令: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+                 joint_velocities[0], joint_velocities[1], joint_velocities[2],
+                 joint_velocities[3], joint_velocities[4], joint_velocities[5]);
+    
+    return true;
+}
+
+
+/**
  * @brief 设置气泵启用/禁用状态。
  * 
  * 通过在驱动节点上设置'enable_air_pump'参数来控制气泵（吸盘）。
@@ -1113,7 +1156,7 @@ bool RoboticTask::handle_idle_state() {
 
     // 设置关节角度
     //**
-    // 索引一：设置开始前的空闲位置。
+    // 检索一：设置开始前的空闲位置。
     //*/
     Eigen::VectorXd idle_joints(6);
     idle_joints << 0.0, 0.8726646259971648, 2.1816615649929116, 2.2514747350725445, 0.0, 0.0;
@@ -1242,7 +1285,6 @@ bool RoboticTask::handle_move_to_catch_point() {
     
     calculate_joint_velocity(end_effector_velocity);
     
-    
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
     return !cancle_current_task.load();
@@ -1298,7 +1340,7 @@ bool RoboticTask::handle_catch_target() {
         RCLCPP_WARN(node->get_logger(), "抓取验证失败，可能未成功抓取目标");
         // 可以选择重试或继续
     }
-    
+
     return !cancle_current_task.load();
 }
 
@@ -1323,29 +1365,129 @@ bool RoboticTask::handle_move_to_release_point() {
     // 实现位置3: 移动到释放位置的路径规划
     // ========================================
     // 需要实现的具体内容:
-    // 1. 根据任务类型计算释放位置
+    // 1. 根据KFS数量计算释放位置
     // 2. 对于抓取任务：计算车辆释放位置
     // 3. 对于放置任务：使用任务目标作为释放位置
     // 4. 考虑携带物体时的碰撞检测
     // 5. 实现安全的释放路径规划
     // 6. 添加释放前的位置确认
     
+    //**
+    // 检索二：KFS 释放到车上的位置
+    //*/
+
     // 当前占位符实现:
     geometry_msgs::msg::Pose release_pose;
     
     if (static_cast<int>(current_task_type.load()) == ArmTask::ROBOTIC_ARM_TASK_CATCH_TARGET) {
         // 抓取任务：释放到车上
-        // TODO: 计算车辆上的释放位置
-        release_pose = task_target_pos; // 临时使用目标位置
-        release_pose.position.z += 0.2; // 抬高一些
+        switch (current_kfs_num.load()) {
+            case 0:
+                {
+                // KFS = 0: 释放到车上
+                Eigen::VectorXd kfs1_detach_pos(6);
+                kfs1_detach_pos << 0.017453293, -0.017453293, 4.101523742, 0.331612558, 0.0, 0.0;
+                std::vector<double> kfs1_detach_pos_vec(kfs1_detach_pos.data(), kfs1_detach_pos.data() + kfs1_detach_pos.size());
+                move_group_interface->setJointValueTarget(kfs1_detach_pos_vec);
+
+                moveit::planning_interface::MoveGroupInterface::Plan plan;
+                moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+                count = 0;
+
+                do {
+                    error_code = move_group_interface->plan(plan);
+                    count++;
+                } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
+
+                if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
+                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    return false;
+                }
+                do{
+                    move_group_interface->execute(plan);
+                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+                
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                return true;
+
+                break;
+                }
+            case 1:
+                {
+                // KFS = 1: 释放到车上
+                Eigen::VectorXd kfs2_detach_pos(6);
+                kfs2_detach_pos << -0.087266463, 0.087266463, 3.420845333, -0.418879020, 0.0, 0.0;
+                std::vector<double> kfs2_detach_pos_vec(kfs2_detach_pos.data(), kfs2_detach_pos.data() + kfs2_detach_pos.size());
+                move_group_interface->setJointValueTarget(kfs2_detach_pos_vec);
+
+                moveit::planning_interface::MoveGroupInterface::Plan plan;
+                moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+                count = 0;
+
+                do {
+                    error_code = move_group_interface->plan(plan);
+                    count++;
+                } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
+
+                if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
+                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    return false;
+                }
+                do{
+                    move_group_interface->execute(plan);
+                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+                
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                return true;
+
+                break;
+                }
+            case 2:
+                {
+                // KFS = 2: 释放到车上
+                Eigen::VectorXd kfs3_hold_pos(6);
+                kfs3_hold_pos << -0.052359878, 0.087266463, 3.595305762, -2.111848394, -0.052359878, 0.0;
+                std::vector<double> kfs3_hold_pos_vec(kfs3_hold_pos.data(), kfs3_hold_pos.data() + kfs3_hold_pos.size());
+                move_group_interface->setJointValueTarget(kfs3_hold_pos_vec);
+
+                moveit::planning_interface::MoveGroupInterface::Plan plan;
+                moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+                count = 0;
+
+                do {
+                    error_code = move_group_interface->plan(plan);
+                    count++;
+                } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
+
+                if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
+                    RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
+                    return false;
+                }
+                do{
+                    move_group_interface->execute(plan);
+                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+                
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                return true;
+                break;
+                }
+            case 3:
+                {
+                // KFS = 3: 释放到车上
+                RCLCPP_ERROR(node->get_logger(), "KFS 已满");
+                return false;
+                }
+            default:
+                break;
+        }
     } else if (static_cast<int>(current_task_type.load()) == ArmTask::ROBOTIC_ARM_TASK_PLACE_TARGET) {
         // 放置任务：释放到指定位置
         // TODO: 使用任务目标作为释放位置
         release_pose = task_target_pos;
     }
-    
-    move_group_interface->setPoseTarget(release_pose);
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
     
     // TODO: 添加释放位置路径规划逻辑
     // 考虑携带物体时的动力学约束
@@ -1353,7 +1495,7 @@ bool RoboticTask::handle_move_to_release_point() {
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
-    return !cancle_current_task.load();
+    return false;
 }
 
 
@@ -1407,7 +1549,6 @@ bool RoboticTask::handle_release_target() {
  * @brief 处理移动到空闲点状态。
  * 
  * 将机器人移动到任务完成后的安全空闲位置。
- * 这通常是机器人的初始位置或静止位置。
  * 
  * TODO: 实现安全的空闲位置计算和路径规划
  * 
