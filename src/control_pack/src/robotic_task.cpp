@@ -965,6 +965,38 @@ void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedP
 
 
 // ==================== 状态机相关函数实现 ====================
+//**
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+//  TODO: 真实的状态机实现逻辑
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+// 
+//  */
 
 /**
  * @brief 执行移动任务。
@@ -1198,8 +1230,17 @@ bool RoboticTask::handle_move_to_catch_point() {
     // 使用计算出的抓取位置而不是预备位置
     // TODO 基于速度控制实现视觉伺服
     /**
-     * @brief 调用calculate_end_effector_velocity  calculate_joint_velocity
+     * target_object_position 作为传入量
+     * 调用calculate_end_effector_velocity  calculate_joint_velocity
+     * 在吸取过程中启动气泵
      */
+    calculate_end_effector_velocity(
+        target_object_position.x(), 
+        target_object_position.y(), 
+        target_object_position.z()
+    );
+    
+    calculate_joint_velocity(end_effector_velocity);
     
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));

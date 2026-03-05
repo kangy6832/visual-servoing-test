@@ -131,6 +131,9 @@ namespace robotic_task {
             // 通用坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
+            // 目标物体坐标（相机为原点）
+            Eigen::Vector3d target_object_position;
+
 
             // MoveIt运动规划接口，用于规划和执行机械臂运动
             std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface;
@@ -321,6 +324,28 @@ namespace robotic_task {
             // 末端速度
             Eigen::Vector3d end_effector_velocity;
 
+            // ROS2 的末端速度表示
+            geometry_msgs::msg::Twist ros2_end_effector_velocity;
+
+            // ROS2 的末端速度发布器
+            rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_pub;
+
+            // ROS2 的末端速度订阅器
+            rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_sub;
+
+            /**
+             * @brief 关节位置（关节角）
+             * 
+             * 最开始，关节位置为零，即各关节的角度为0°。
+             * 后，使用 get_joint_position() 获取上次规划后的关节位置，并作为当前的关节位置。
+             * 这样，在规划过程中，关节位置会不断更新，直到达到目标位置。
+             */
+            Eigen::VectorXd joint_position;
+            Eigen::VectorXd temp_joint_position; // 临时关节位置
+
+
+            
+
             /**
             * @brief 根据目标坐标构建末端速度向量
             * 
@@ -368,15 +393,7 @@ namespace robotic_task {
             ) const;
 
 
-            /**
-             * @brief 关节位置（关节角）
-             * 
-             * 最开始，关节位置为零，即各关节的角度为0°。
-             * 后，使用 get_joint_position() 获取上次规划后的关节位置，并作为当前的关节位置。
-             * 这样，在规划过程中，关节位置会不断更新，直到达到目标位置。
-             */
-            Eigen::VectorXd joint_position;
-            Eigen::VectorXd temp_joint_position; // 临时关节位置
+            
 
 
             /**
@@ -403,14 +420,7 @@ namespace robotic_task {
             void jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg);
 
 
-            // ROS2 的末端速度表示
-            geometry_msgs::msg::Twist ros2_end_effector_velocity;
-
-            // ROS2 的末端速度发布器
-            rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_pub;
-
-            // ROS2 的末端速度订阅器
-            rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr ros2_end_effector_velocity_sub;
+            
             
             
             /**
