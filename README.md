@@ -1,4 +1,4 @@
-# Visual Servoing Robot Control System
+# 视觉伺服机器人控制系统
 
 ## 项目概述
 
@@ -16,34 +16,59 @@ visual_servoing/
 │   │   │   ├── robotic_task.hpp
 │   │   │   ├── trajectory_executor.hpp
 │   │   │   └── velocity_ik_generator.hpp
-│   │   └── src/
-│   │       ├── robot_pose_polynomial.cpp
-│   │       ├── robotic_task.cpp
-│   │       ├── trajectory_executor.cpp
-│   │       └── velocity_ik_generator.cpp
+│   │   ├── lib/
+│   │   ├── src/
+│   │   │   ├── robot_pose_polynomial.cpp
+│   │   │   ├── robotic_task.cpp
+│   │   │   ├── trajectory_executor.cpp
+│   │   │   └── velocity_ik_generator.cpp
+│   │   ├── API_Documentation.md
+│   │   ├── CMakeLists.txt
+│   │   └── package.xml
 │   ├── controller/            # 控制器 - ROS2控制器实现
 │   │   ├── include/controller/
 │   │   │   └── visual_servoing_controller.hpp
-│   │   └── src/
-│   │       └── visual_servoing_controller.cpp
-│   ├── robot_interfaces/      # 机器人接口定义
-│   │   ├── msg/
-│   │   │   ├── Image.msg
-│   │   │   ├── Joint.msg
-│   │   │   └── Robot.msg
-│   │   └── action/
-│   │       └── Catch.action
-│   └── robotic_arm/           # 机器人手臂模型
-│       ├── config/
-│       │   └── joint_names_robotic_arm.yaml
-│       ├── meshes/            # 3D模型文件
-│       └── urdf/
-│           ├── robotic_arm.csv
-│           └── robotic_arm.urdf
-├── build/                     # 构建目录
-├── install/                   # 安装目录
-└── log/                       # 日志目录
+│   │   ├── src/
+│   │   │   └── visual_servoing_controller.cpp
+│   │   ├── CMakeLists.txt
+│   │   ├── package.xml
+│   │   └── plugins.xml
+│   ├── robot_driver/          # 机器人驱动
+│   │   ├── include/
+│   │   ├── src/
+│   │   ├── CMakeLists.txt
+│   │   └── package.xml
+│   └── robot_interfaces/      # 机器人接口定义
+│       ├── action/
+│       │   └── Catch.action
+│       ├── include/
+│       ├── msg/
+│       │   ├── Image.msg
+│       │   ├── Joint.msg
+│       │   └── Robot.msg
+│       ├── CMakeLists.txt
+│       └── package.xml
+├── .gitignore
+├── .windsurfignore
+├── 99-usb-robot.rules         # USB机器人规则
+├── AIR_PUMP_IMPROVEMENTS_SUMMARY.md  # 气泵改进总结
+├── README.md
+├── test_air_pump.py           # 气泵测试脚本
+├── 状态机实现总结.md            # 状态机实现总结
+├── 路径规划实现指导.md          # 路径规划实现指导
+├── build/                     # 构建目录 (自动生成)
+├── install/                   # 安装目录 (自动生成)
+└── log/                       # 日志目录 (自动生成)
 ```
+
+## 附加文档
+
+本项目包含以下附加文档：
+
+- `AIR_PUMP_IMPROVEMENTS_SUMMARY.md`：气泵改进总结
+- `状态机实现总结.md`：状态机实现总结
+- `路径规划实现指导.md`：路径规划实现指导
+- `API_Documentation.md`：控制包API文档
 
 ## 功能特性
 
