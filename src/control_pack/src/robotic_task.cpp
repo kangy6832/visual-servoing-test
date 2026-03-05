@@ -1062,6 +1062,8 @@ bool RoboticTask::execute_move_task() {
     
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
     return handle_idle_state();
+
+    return true;
 }
 
 
@@ -1099,6 +1101,8 @@ bool RoboticTask::execute_catch_task() {
     
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
     if(!handle_move_to_idle_point()) return false;
+
+    return true;
 }
 
 
@@ -1113,12 +1117,9 @@ bool RoboticTask::execute_catch_task() {
 bool RoboticTask::execute_place_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行放置任务");
     
-    // 与抓取任务类似的状态序列，但逻辑不同
-    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
-    if(!handle_move_to_ready_catch_point()) return false;
-    
+    // 与抓取任务类似的状态序列，但逻辑不同    
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT);
-    if(!handle_move_to_catch_point()) return false;
+    if(!handle_move_to_catch_point_kfs_not_zero()) return false;
     
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_CATCH_TARGET);
     if(!handle_catch_target()) return false;
@@ -1132,8 +1133,7 @@ bool RoboticTask::execute_place_task() {
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
     if(!handle_move_to_idle_point()) return false;
     
-    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
-    return handle_idle_state();
+    return true;
 }
 
 
@@ -1148,38 +1148,104 @@ bool RoboticTask::execute_place_task() {
  * @return 如果成功返回true，否则返回false
  */
 bool RoboticTask::handle_idle_state() {
+    // 记录日志：开始处理空闲状态
     RCLCPP_INFO(node->get_logger(), "处理空闲状态");
+    // 更新反馈给客户端，告知当前状态
     update_feedback();
 
-    // 设置关节角度
     //**
     // 检索一：设置开始前的空闲位置。
     //*/
     Eigen::VectorXd idle_joints(6);
     idle_joints << 0.0, 0.8726646259971648, 2.1816615649929116, 2.2514747350725445, 0.0, 0.0;
+    // 将Eigen向量转换为std::vector<double>，因为MoveIt接口需要此类型
     std::vector<double> idle_joints_vec(idle_joints.data(), idle_joints.data() + idle_joints.size());
+    // 设置MoveIt的目标关节值
     move_group_interface->setJointValueTarget(idle_joints_vec);
 
-    // 规划到空闲位置
+    // 规划到空闲位置：使用MoveIt规划从当前位置到空闲位置的轨迹
+    // 创建规划对象
     moveit::planning_interface::MoveGroupInterface::Plan plan;
+    // 执行规划，获取错误码
     moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+    // 初始化重试计数器
     count = 0;
 
+    // 重试循环：如果规划失败，重试最多100次
+    // 这可以处理临时规划失败，如环境变化
     do {
+        // 重新执行规划
         error_code = move_group_interface->plan(plan);
+        // 计数器递增
         count++;
     } while (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS && count < 100);
 
+    // 检查规划结果：如果失败，记录错误并返回false
     if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS) {
         RCLCPP_ERROR(node->get_logger(), "规划到空闲位置失败");
         return false;
     }
-    do{
-        move_group_interface->execute(plan);
-    } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
-    
 
+    /**
+     * @brief 使用五次多项式轨迹管理器进行平滑执行
+     *
+     * 五次多项式轨迹可以保证位置、速度、加速度的连续性，实现平滑运动
+     */
+    // 设置轨迹：将规划得到的关节轨迹传递给多项式轨迹管理器
+    robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+    // 开始跟踪轨迹：记录开始时间
+    robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+    // 控制循环：使用平滑轨迹点发送速度命令
+    // 创建100Hz的循环率（每秒100次）
+    rclcpp::Rate rate(100); // 100Hz控制频率
+    // 记录轨迹开始时间
+    auto start_time = node->now();
+    // 计算轨迹总持续时间：从轨迹最后一个点的时间戳获取
+    // 时间戳包含秒和纳秒，需要转换
+    double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                 plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+
+    // 主控制循环：执行轨迹直到结束
+    // 循环条件：当前时间距离开始时间小于轨迹持续时间加1秒缓冲
+    while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+        // 获取当前时间的期望轨迹点（位置、速度、加速度）
+        trajectory_msgs::msg::JointTrajectoryPoint target_point;
+        // 如果成功获取目标点，则执行速度控制
+        if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+            // 获取当前关节位置：从MoveIt获取实际关节反馈
+            // TODO: 从实际反馈获取当前关节位置
+            std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+            
+            // 计算速度命令：(目标位置 - 当前位置) / 时间步长
+            // 使用简单的比例控制计算关节速度
+            std::vector<double> joint_velocities(6);
+            // 时间步长：10ms，对应100Hz控制频率
+            double dt = 0.01;
+            // 对每个关节计算速度
+            for(size_t i = 0 ; i < 6 ; ++i){
+                joint_velocities[i] = (target_point.positions[i] - current_joint_positions[i]) / dt;
+            }
+
+            // 发送速度命令到控制器：将速度转换为Eigen向量
+            Eigen::VectorXd joint_velocities_eigen(6);
+            for(size_t i = 0 ; i < 6 ; ++i){
+                joint_velocities_eigen(i) = joint_velocities[i];
+            }
+            // 调用硬件接口发送关节速度命令
+            send_joint_velocity_to_hardware(joint_velocities_eigen);
+        }
+        // 睡眠以维持100Hz频率
+        rate.sleep();
+    }
+
+    // 停止速度命令：轨迹执行完毕后发送零速度命令停止机器人
+    Eigen::VectorXd zero_velocities(6);
+    zero_velocities.setZero();  // 设置所有速度为0
+    send_joint_velocity_to_hardware(zero_velocities);
+
+    // 短暂延迟：确保停止命令生效
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 返回成功
     return true;
 }
 

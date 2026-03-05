@@ -3,7 +3,7 @@
 #include "robot_pose_polynomial.hpp"
 #include "velocity_ik_generator.hpp"
 
-
+#include "control_pack/robot_pose_polynomial.hpp"
 #include "visualization_msgs/msg/marker.hpp" 
 #include <geometry_msgs/msg/detail/pose__struct.hpp> 
 #include <geometry_msgs/msg/pose.hpp> 
