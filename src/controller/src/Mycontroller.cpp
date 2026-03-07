@@ -99,6 +99,7 @@ namespace mycontroller {
                 // 初始化状态值：位置和速度（从硬件读取）
                 state_positions_.push_back(0.0);
                 state_velocities_.push_back(0.0);
+                state_efforts_.push_back(0.0);
                 // 初始化命令值：位置、速度、力矩（发送到硬件）
                 command_positions_.push_back(0.0);
                 command_velocities_.push_back(0.0);
@@ -121,10 +122,11 @@ namespace mycontroller {
                 [this](const robot_interfaces::msg::Robot& msg){
                     // 回调函数：更新状态向量
                     // 这里假设有 6 个关节，实际应使用 joint_names_.size()
-                    for(int i =0 ; i < 6 ; i++){
+                    for(int i = 0 ; i < 6 ; i++){
                         // 更新位置和速度状态
                         state_positions_[i] = msg.joints[i].rad;
                         state_velocities_[i] = msg.joints[i].omega;
+                        state_efforts_[i] = msg.joints[i].torque;
                     }
                 }
             );
@@ -133,19 +135,20 @@ namespace mycontroller {
         
         // 导出状态接口方法
         // 这个方法返回一个状态接口向量，每个接口代表一个可以被控制器读取的状态
-        // 状态接口包括关节的位置、速度等，用于反馈控制
+        // 状态接口包括关节的位置、速度和力矩等，用于反馈控制
         // 返回：vector of StateInterface，每个接口包含关节名、接口名（如 "position"）、状态值的引用
         std::vector<hardware_interface::StateInterface> export_state_interfaces() override {
             std::vector<hardware_interface::StateInterface> state_interfaces;
             // 预留空间，提高效率
-            state_interfaces.reserve(joint_names_.size() * 2);
-            // 为每个关节创建位置和速度状态接口
+            state_interfaces.reserve(joint_names_.size() * 3);
+            // 为每个关节创建位置、速度和力矩状态接口
             for(size_t i = 0 ; i < joint_names_.size() ; i++){
                 // 位置状态接口：控制器可以读取关节当前位置
                 state_interfaces.emplace_back(joint_names_[i], "position", &state_positions_[i]);
                 // 速度状态接口：控制器可以读取关节当前速度
                 state_interfaces.emplace_back(joint_names_[i], "velocity", &state_velocities_[i]);
-                // 注意：状态接口通常不包括力矩，因为力矩是命令，不是状态
+                // 力矩状态接口：控制器可以读取关节当前力矩（反馈）
+                state_interfaces.emplace_back(joint_names_[i], "effort", &state_efforts_[i]);
             }
             return state_interfaces;
         }
@@ -273,6 +276,7 @@ namespace mycontroller {
         // 状态向量：存储从硬件读取的关节状态
         std::vector<double> state_positions_;   // 关节位置（弧度）
         std::vector<double> state_velocities_;  // 关节速度（弧度/秒）
+        std::vector<double> state_efforts_;     // 关节力矩（反馈）
         
         // 命令向量：存储控制器设置的关节命令
         std::vector<double> command_positions_; // 目标位置

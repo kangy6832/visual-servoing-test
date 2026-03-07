@@ -6,7 +6,8 @@
   name="robotic_arm">
   <ros2_control name="arm_hw" type="system">
     <hardware>
-      <plugin>fake_components/GenericSystem</plugin>
+    <!-- 自己编写控制器软件包的命名空间和类名 -->
+      <plugin>mycontroller/MyControl</plugin>
     </hardware>
 
     <joint name="joint1">

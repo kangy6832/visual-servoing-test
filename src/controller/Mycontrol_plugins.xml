@@ -1,4 +1,4 @@
-<library path="my_controller">
+<library path="visual_servoing_controller">
     <class name="mycontroller/MyControl" type="mycontroller::MyControl" base_class_type="hardware_interface::SystemInterface">
         <description>My ros2_controller hardware interface</description>
     </class>
