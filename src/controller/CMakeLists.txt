@@ -26,12 +26,36 @@ find_package(kdl_parser REQUIRED)
 find_package(orocos_kdl REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(hardware_interface REQUIRED)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+
+  # the following line skips the linter which checks for copyrights
+  # comment the line when a copyright and license is added to all source files
+  set(ament_cmake_copyright_FOUND TRUE)
+
+  # the following line skips cpplint (only works in a git repo)
+  # comment the line when this package is in a git repo and when
+  # a copyright and license is added to all source files
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+# 声明插件
+pluginlib_export_plugin_description_file(controller_interface plugins.xml)
+# 声明插件
+pluginlib_export_plugin_description_file(hardware_interface Mycontrol_plugins.xml)
 
 add_library(visual_servoing_controller SHARED
   src/visual_servoing_controller.cpp
 )
 
-target_compile_definitions(visual_servoing_controller PRIVATE "PLUGINLIB__DISABLE_CLASS_LOADER_MACRO_H")
+add_library(my_controller SHARED 
+  src/Mycontroller.cpp
+)
+
+
 
 target_include_directories(visual_servoing_controller PUBLIC 
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -58,10 +82,22 @@ ament_target_dependencies(visual_servoing_controller
   Eigen3
 )
 
-# 声明插件
-pluginlib_export_plugin_description_file(visual_servoing_controller plugins.xml)
+ament_target_dependencies(my_controller 
+  rclcpp
+  hardware_interface
+  pluginlib
+  controller_manager_msgs
+  urdf
+  robot_interfaces
+)
 
 install(TARGETS visual_servoing_controller 
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+install(TARGETS my_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -73,48 +109,10 @@ install(DIRECTORY include/
 )
 
 # 安装插件描述文件
-install(FILES plugins.xml
+install(FILES plugins.xml Mycontrol_plugins.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
-# 导出依赖
-ament_export_dependencies(
-  rclcpp 
-  rclcpp_lifecycle
-  rclcpp_action
-  hardware_interface
-  controller_interface
-  controller_manager_msgs
-  joint_trajectory_controller
-  pluginlib
-  robot_interfaces
-  std_msgs
-  urdf
-  trajectory_msgs
-  control_msgs
-  builtin_interfaces
-  kdl_parser
-  orocos_kdl
-  moveit_msgs
-  Eigen3
-)
 
-# 导出库
-ament_export_include_directories(include)
-ament_export_libraries(visual_servoing_controller)
-
-
-
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
-  set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
-  set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
-endif()
 
 ament_package()
