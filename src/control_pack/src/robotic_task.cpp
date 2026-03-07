@@ -1340,13 +1340,25 @@ bool RoboticTask::handle_move_to_catch_point() {
      * 调用calculate_end_effector_velocity  calculate_joint_velocity
      * 在吸取过程中启动气泵
      */
-    calculate_end_effector_velocity(
-        target_object_position.x(), 
-        target_object_position.y(), 
-        target_object_position.z()
-    );
+
+    while (true) {
+        calculate_end_effector_velocity(
+            target_object_position.x(), 
+            target_object_position.y(), 
+            target_object_position.z()
+        );
+        
+        auto joint_velocities = calculate_joint_velocity(end_effector_velocity);
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        if (cancle_current_task.load() || end_effector_velocity.norm() < 0.01) {
+            break;
+        }
+
+        send_joint_velocity_to_hardware(joint_velocities);
+    }
     
-    calculate_joint_velocity(end_effector_velocity);
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     

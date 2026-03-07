@@ -321,6 +321,7 @@ namespace robotic_task {
 
             // 末端速度
             Eigen::Vector3d end_effector_velocity;
+            
 
             // ROS2 的末端速度表示
             geometry_msgs::msg::Twist ros2_end_effector_velocity;
