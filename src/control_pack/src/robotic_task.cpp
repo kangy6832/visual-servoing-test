@@ -850,6 +850,8 @@ bool RoboticTask::send_joint_velocity_to_hardware(const Eigen::VectorXd& joint_v
     for (int i = 0; i < 6; ++i) {
         velocity_msg->joints[i].rad = joint_position[i];    // 当前位置
         velocity_msg->joints[i].omega = joint_velocities[i]; // 目标速度
+        velocity_msg->joints[i].torque = 0.0f;              // 力矩设为0（纯速度控制）
+        velocity_msg->joints[i].alpha = 0.0f;               // 加速度设为0
     }
     
         
@@ -859,6 +861,42 @@ bool RoboticTask::send_joint_velocity_to_hardware(const Eigen::VectorXd& joint_v
     RCLCPP_DEBUG(node->get_logger(), "发送关节速度命令: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
                  joint_velocities[0], joint_velocities[1], joint_velocities[2],
                  joint_velocities[3], joint_velocities[4], joint_velocities[5]);
+    
+    return true;
+}
+
+/**
+ * @brief 发送关节力矩命令到硬件驱动节点
+ * 
+ * 将计算出的关节力矩通过ROS2话题发布给硬件驱动节点，
+ * 实现对机械臂的力矩控制。
+ * 
+ * @param joint_torques 要发送的关节力矩向量
+ * @return 发送成功返回true，失败返回false
+ */
+bool RoboticTask::send_joint_torque_to_hardware(const Eigen::VectorXd& joint_torques) {
+    if (joint_torques.size() != 6) {
+        RCLCPP_ERROR(node->get_logger(), "关节力矩向量维度错误，期望6维，实际%zu维", joint_torques.size());
+        return false;
+    }
+
+    // 创建ROS2消息
+    auto torque_msg = std::make_shared<robot_interfaces::msg::Robot>();
+    
+    // 填充关节力矩数据
+    for (int i = 0; i < 6; ++i) {
+        torque_msg->joints[i].rad = joint_position[i];         // 当前位置
+        torque_msg->joints[i].omega = 0.0f;                     // 速度设为0（纯力矩控制）
+        torque_msg->joints[i].torque = static_cast<float>(joint_torques[i]); // 目标力矩
+        torque_msg->joints[i].alpha = 0.0f;                     // 加速度设为0
+    }
+    
+    // 发布力矩命令
+    joint_velocity_publisher_->publish(*torque_msg);
+    
+    RCLCPP_DEBUG(node->get_logger(), "发送关节力矩命令: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+                 joint_torques[0], joint_torques[1], joint_torques[2],
+                 joint_torques[3], joint_torques[4], joint_torques[5]);
     
     return true;
 }
@@ -1373,7 +1411,7 @@ bool RoboticTask::handle_move_to_catch_point() {
     Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions);
     
     // 末端恒定加速度向量
-    Eigen::Vector3d ee_acceleration(0, 0, -dynamics_params_.end_effector_acceleration); // 向下恒定加速度
+    Eigen::Vector3d ee_acceleration = target_object_position.normalized(); // 向下恒定加速度
     
     while (true) {
         // 计算末端速度
@@ -1385,6 +1423,10 @@ bool RoboticTask::handle_move_to_catch_point() {
         
         // 基础关节速度计算
         auto joint_velocities = calculate_joint_velocity(end_effector_velocity);
+        
+        // 动力学力矩变量（需要在if块外定义）
+        Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+        bool use_torque_control = false;
         
         // 如果KDL动力学可用且启用动力学补偿，添加动力学补偿
         if (kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation) {
@@ -1407,7 +1449,7 @@ bool RoboticTask::handle_move_to_catch_point() {
                 }
                 
                 // 计算完整的动力学力矩
-                Eigen::VectorXd dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                     current_joint_positions, current_joint_velocities, joint_accelerations);
                 
                 // 安全检查：关节力矩限制
@@ -1424,11 +1466,17 @@ bool RoboticTask::handle_move_to_catch_point() {
                     break;
                 }
                 
-                // 将动力学补偿转换为速度调整（简化实现）
+                // 使用完整的动力学前馈补偿
+                Eigen::VectorXd tau_ff = dynamics_torque; // 包含惯性、科氏力、重力
+                
+                // 将动力学补偿转换为速度调整
                 for (int i = 0; i < joint_velocities.size(); ++i) {
-                    double torque_compensation = (gravity_compensation(i) + coriolis_compensation(i)) * dynamics_params_.compensation_gain;
-                    joint_velocities(i) += torque_compensation;
+                    // 使用补偿增益将力矩转换为速度修正量
+                    // 简化实现：τ ≈ K_v * Δv，其中 K_v 是速度增益
+                    joint_velocities(i) += dynamics_params_.compensation_gain * tau_ff(i);
                 }
+
+                // use_torque_control = true;
                 
                 // 更新关节速度状态
                 current_joint_velocities = joint_velocities;
@@ -1437,11 +1485,19 @@ bool RoboticTask::handle_move_to_catch_point() {
             } catch (const std::exception& e) {
                 RCLCPP_WARN(node->get_logger(), "KDL动力学计算失败: %s", e.what());
                 // 降级到基础控制
+                use_torque_control = false;
             }
         }
         
-        // 发送速度命令
-        send_joint_velocity_to_hardware(joint_velocities);
+        // 根据控制模式发送命令
+        if (use_torque_control) {
+            // 发送力矩命令（使用计算出的动力学力矩）
+            send_joint_torque_to_hardware(dynamics_torque);
+        } else {
+            // 发送速度命令（降级模式）
+            send_joint_velocity_to_hardware(joint_velocities);
+        }
+        
         
         // 控制频率等待
         std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(dt * 1000)));
@@ -1452,6 +1508,11 @@ bool RoboticTask::handle_move_to_catch_point() {
         }
     }
     
+    // 停止力矩命令：轨迹执行完毕后发送零力矩命令停止机器人
+    Eigen::VectorXd zero_torques(6);
+    zero_torques.setZero();  // 设置所有力矩为0
+    send_joint_torque_to_hardware(zero_torques);
+
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
     return !cancle_current_task.load();

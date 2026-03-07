@@ -210,7 +210,7 @@ Eigen::VectorXd KDLDynamics::calculateDynamicsTorque(
     Eigen::VectorXd gravity_torque = calculateGravityCompensation(joint_positions);
     
     // 完整动力学力矩：τ = H*q̈ + C*q̇ + G
-    return inertia_torque + coriolis_torque + gravity_torque;
+    return (inertia_torque + coriolis_torque + gravity_torque);
 }
 
 void KDLDynamics::validateInput(const Eigen::VectorXd& data, const std::string& context) const {

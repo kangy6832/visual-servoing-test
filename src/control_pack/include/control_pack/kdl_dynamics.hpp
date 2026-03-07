@@ -56,8 +56,8 @@ public:
      * @return true 初始化成功
      */
     bool initFromURDF(const std::string& urdf_path, 
-                     const std::string& base_link = "base_link", 
-                     const std::string& tip_link = "tool0");
+                     const std::string& base_link = "joint1", 
+                     const std::string& tip_link = "joint6");
 
     /**
      * @brief 计算重力补偿力矩

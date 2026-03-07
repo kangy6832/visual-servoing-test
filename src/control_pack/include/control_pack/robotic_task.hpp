@@ -424,6 +424,17 @@ namespace robotic_task {
             */
             bool send_joint_velocity_to_hardware(const Eigen::VectorXd& joint_velocities);
 
+            /**
+            * @brief 发送关节力矩命令到硬件驱动节点
+            * 
+            * 将计算出的关节力矩通过ROS2话题发布给硬件驱动节点，
+            * 实现对机械臂的力矩控制。
+            * 
+            * @param joint_torques 要发送的关节力矩向量
+            * @return 发送成功返回true，失败返回false
+            */
+            bool send_joint_torque_to_hardware(const Eigen::VectorXd& joint_torques);
+
 
             
 
