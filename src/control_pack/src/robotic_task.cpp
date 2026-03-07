@@ -149,6 +149,21 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);            // 设置速度缩放因子
     move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);    // 设置加速度缩放因子
 
+    // 初始化KDL动力学计算类
+    try {
+        kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
+        std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
+        if (kdl_dynamics_->initFromURDF(urdf_path, "base_link", "tool0")) {
+            RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
+        } else {
+            RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");
+            kdl_dynamics_.reset();
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化异常: %s", e.what());
+        kdl_dynamics_.reset();
+    }
+
     // move_group_interface->allowReplanning(true); // 允许重新规划
     // move_group_interface->setPlannerId("RRTConnectkConfigDefault"); // 设置规划器
     // move_group_interface->setNumPlanningAttempts(10); // 设置规划尝试次数
@@ -1334,31 +1349,108 @@ bool RoboticTask::handle_move_to_catch_point() {
     );
     
     // 使用计算出的抓取位置而不是预备位置
-    // TODO 基于速度控制实现视觉伺服
+    // 基于速度控制实现视觉伺服，添加KDL动力学补偿
     /**
      * target_object_position 作为传入量
      * 调用calculate_end_effector_velocity  calculate_joint_velocity
      * 在吸取过程中启动气泵
+     * 
+     * 新增功能：
+     * - 使用KDL动力学补偿提高控制精度
+     * - 实现末端恒定加速度运动
+     * - 添加关节加速度控制
+     * - 安全检查和紧急停止
      */
 
+    // 控制参数
+    const double dt = 1.0 / dynamics_params_.control_frequency;
+    
+    // 获取当前关节位置和速度
+    Eigen::VectorXd current_joint_positions = get_joint_position();
+    Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+    
+    // 计算雅可比矩阵用于加速度映射
+    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions);
+    
+    // 末端恒定加速度向量
+    Eigen::Vector3d ee_acceleration(0, 0, -dynamics_params_.end_effector_acceleration); // 向下恒定加速度
+    
     while (true) {
+        // 计算末端速度
         calculate_end_effector_velocity(
             target_object_position.x(), 
             target_object_position.y(), 
             target_object_position.z()
         );
         
+        // 基础关节速度计算
         auto joint_velocities = calculate_joint_velocity(end_effector_velocity);
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // 如果KDL动力学可用且启用动力学补偿，添加动力学补偿
+        if (kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation) {
+            try {
+                // 计算重力补偿
+                Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions);
+                
+                // 计算科氏力补偿
+                Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                    current_joint_positions, current_joint_velocities);
+                
+                // 计算关节加速度（基于末端恒定加速度）
+                Eigen::VectorXd joint_accelerations = kdl_dynamics_->calculateJointAcceleration(
+                    current_joint_positions, current_joint_velocities, ee_acceleration, jacobian);
+                
+                // 限制关节加速度
+                for (int i = 0; i < joint_accelerations.size(); ++i) {
+                    joint_accelerations(i) = std::max(-dynamics_params_.max_joint_acceleration, 
+                                                   std::min(dynamics_params_.max_joint_acceleration, joint_accelerations(i)));
+                }
+                
+                // 计算完整的动力学力矩
+                Eigen::VectorXd dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                    current_joint_positions, current_joint_velocities, joint_accelerations);
+                
+                // 安全检查：关节力矩限制
+                if (!checkJointTorqueLimits(dynamics_torque)) {
+                    RCLCPP_WARN(node->get_logger(), "关节力矩超出限制，停止运动");
+                    break;
+                }
+                
+                // 安全检查：紧急停止条件
+                if (dynamics_params_.enable_acceleration_control && 
+                    checkEmergencyStop(current_joint_positions, joint_velocities, joint_accelerations)) {
+                    RCLCPP_ERROR(node->get_logger(), "触发紧急停止条件");
+                    cancle_current_task = true;
+                    break;
+                }
+                
+                // 将动力学补偿转换为速度调整（简化实现）
+                for (int i = 0; i < joint_velocities.size(); ++i) {
+                    double torque_compensation = (gravity_compensation(i) + coriolis_compensation(i)) * dynamics_params_.compensation_gain;
+                    joint_velocities(i) += torque_compensation;
+                }
+                
+                // 更新关节速度状态
+                current_joint_velocities = joint_velocities;
+                current_joint_positions += joint_velocities * dt;
+                
+            } catch (const std::exception& e) {
+                RCLCPP_WARN(node->get_logger(), "KDL动力学计算失败: %s", e.what());
+                // 降级到基础控制
+            }
+        }
         
+        // 发送速度命令
+        send_joint_velocity_to_hardware(joint_velocities);
+        
+        // 控制频率等待
+        std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(dt * 1000)));
+        
+        // 检查停止条件
         if (cancle_current_task.load() || end_effector_velocity.norm() < 0.01) {
             break;
         }
-
-        send_joint_velocity_to_hardware(joint_velocities);
     }
-    
     
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
@@ -1896,6 +1988,62 @@ std::string RoboticTask::get_state_description(ArmTaskState state) {
         default:
             return "未知状态";
     }
+}
+
+bool RoboticTask::checkJointTorqueLimits(const Eigen::VectorXd& joint_torques) const {
+    if (joint_torques.size() != 6) {
+        RCLCPP_ERROR(node->get_logger(), "关节力矩向量维度错误");
+        return false;
+    }
+    
+    for (int i = 0; i < joint_torques.size(); ++i) {
+        if (std::abs(joint_torques(i)) > dynamics_params_.max_joint_torque) {
+            RCLCPP_WARN(node->get_logger(), "关节 %d 力矩 %.2f 超出限制 %.2f", 
+                       i, joint_torques(i), dynamics_params_.max_joint_torque);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RoboticTask::checkEmergencyStop(
+    const Eigen::VectorXd& joint_positions,
+    const Eigen::VectorXd& joint_velocities,
+    const Eigen::VectorXd& joint_accelerations
+) const {
+    // 检查关节速度是否过大
+    for (int i = 0; i < joint_velocities.size(); ++i) {
+        if (std::abs(joint_velocities(i)) > dynamics_params_.emergency_stop_threshold) {
+            RCLCPP_ERROR(node->get_logger(), "关节 %d 速度 %.2f 超出紧急停止阈值 %.2f", 
+                        i, joint_velocities(i), dynamics_params_.emergency_stop_threshold);
+            return true;
+        }
+    }
+    
+    // 检查关节加速度是否过大
+    for (int i = 0; i < joint_accelerations.size(); ++i) {
+        if (std::abs(joint_accelerations(i)) > dynamics_params_.max_joint_acceleration * 5.0) {
+            RCLCPP_ERROR(node->get_logger(), "关节 %d 加速度 %.2f 过大", 
+                        i, joint_accelerations(i));
+            return true;
+        }
+    }
+    
+    // 检查关节位置是否在合理范围内（可以根据实际机器人调整）
+    for (int i = 0; i < joint_positions.size(); ++i) {
+        if (std::abs(joint_positions(i)) > M_PI) {
+            RCLCPP_ERROR(node->get_logger(), "关节 %d 位置 %.2f 超出合理范围", 
+                        i, joint_positions(i));
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+void RoboticTask::updateDynamicsParams(const DynamicsControlParams& params) {
+    dynamics_params_ = params;
+    RCLCPP_INFO(node->get_logger(), "动力学控制参数已更新");
 }
 
 

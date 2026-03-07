@@ -4,6 +4,7 @@
 #include "velocity_ik_generator.hpp"
 
 #include "control_pack/robot_pose_polynomial.hpp"
+#include "control_pack/kdl_dynamics.hpp"
 #include "visualization_msgs/msg/marker.hpp" 
 #include <geometry_msgs/msg/detail/pose__struct.hpp> 
 #include <geometry_msgs/msg/pose.hpp> 
@@ -33,6 +34,12 @@
 #include <Eigen/Dense> 
 #include <Eigen/Geometry> 
 #include <vector>
+#include <urdf/model.h>
+#include <kdl/tree.hpp>
+#include <kdl/chain.hpp>
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chaindynparam.hpp>
+#include <Eigen/Dense>
 
 typedef enum{
     ROBOTIC_ARM_TASK_MOVE = 1,          // 移动任务
@@ -319,6 +326,21 @@ namespace robotic_task {
             // 基于KDL和Eigen的机械臂运动学计算类
             RobotKinematicsKDL::RobotArmKinematics velocity_ik_generator_RobotArmKinematics;
 
+            // KDL动力学计算类
+            std::unique_ptr<robotic_task::KDLDynamics> kdl_dynamics_;
+
+            // 动力学控制参数
+            struct DynamicsControlParams {
+                double control_frequency = 50.0;           // Hz
+                double end_effector_acceleration = 0.1;    // m/s²
+                double max_joint_acceleration = 1.0;       // rad/s²
+                double compensation_gain = 0.1;            // 动力学补偿增益
+                double max_joint_torque = 50.0;            // N·m 关节力矩限制
+                double emergency_stop_threshold = 100.0;   // 紧急停止阈值
+                bool enable_dynamics_compensation = true;   // 启用动力学补偿
+                bool enable_acceleration_control = true;    // 启用加速度控制
+            } dynamics_params_;
+
             // 末端速度
             Eigen::Vector3d end_effector_velocity;
             
@@ -415,6 +437,35 @@ namespace robotic_task {
             * @return 当前关节位置的向量
             */
             Eigen::VectorXd get_joint_position() const;
+
+            /**
+            * @brief 检查关节力矩是否在安全范围内
+            * 
+            * @param joint_torques 关节力矩向量
+            * @return true 安全，false 超出限制
+            */
+            bool checkJointTorqueLimits(const Eigen::VectorXd& joint_torques) const;
+
+            /**
+            * @brief 检查是否需要紧急停止
+            * 
+            * @param joint_positions 关节位置
+            * @param joint_velocities 关节速度
+            * @param joint_accelerations 关节加速度
+            * @return true 需要紧急停止
+            */
+            bool checkEmergencyStop(
+                const Eigen::VectorXd& joint_positions,
+                const Eigen::VectorXd& joint_velocities,
+                const Eigen::VectorXd& joint_accelerations
+            ) const;
+
+            /**
+            * @brief 更新动力学控制参数
+            * 
+            * @param params 新的控制参数
+            */
+            void updateDynamicsParams(const DynamicsControlParams& params);
 
             // 实现关节位置的实时更新
             rclcpp::Subscription<robot_interfaces::msg::Robot>::SharedPtr joint_state_subscriber_;

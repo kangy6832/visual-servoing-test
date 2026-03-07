@@ -47,9 +47,9 @@ find_package(robot_interfaces REQUIRED)
 
 # Add executable for robotic_task
 add_executable(robotic_task_node
-  src/main.cpp
   src/robotic_task_node.cpp
   src/robotic_task.cpp
+  src/kdl_dynamics.cpp
   src/robot_pose_polynomial.cpp
   src/velocity_ik_generator.cpp
   src/trajectory_executor.cpp
