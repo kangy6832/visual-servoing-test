@@ -22,6 +22,8 @@
 #include <Eigen/src/Core/util/Constants.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
+#include <cstddef>
+#include <exception>
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
 #include <geometry_msgs/msg/detail/vector3__struct.hpp>
 #include <memory>
@@ -1218,11 +1220,9 @@ bool RoboticTask::handle_idle_state() {
     move_group_interface->setJointValueTarget(idle_joints_vec);
 
     const double dt = 1.0 / dynamics_params_.control_frequency;
-    Eigen::VectorXd current_joint_positions_ = get_joint_position();
+    
     Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
     Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
-    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
-    
 
 
     // 规划到空闲位置：使用MoveIt规划从当前位置到空闲位置的轨迹
@@ -1263,8 +1263,6 @@ bool RoboticTask::handle_idle_state() {
     // 记录轨迹开始时间
     auto start_time = node->now();
 
-
-
     // 计算轨迹总持续时间：从轨迹最后一个点的时间戳获取
     // 时间戳包含秒和纳秒，需要转换
     double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec +    // s
@@ -1273,6 +1271,11 @@ bool RoboticTask::handle_idle_state() {
     // 主控制循环：执行轨迹直到结束
     // 循环条件：当前时间距离开始时间小于轨迹持续时间加1秒缓冲
     while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+
+        Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+        Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+
+
         // 获取当前时间的期望轨迹点（位置、速度、加速度）
         trajectory_msgs::msg::JointTrajectoryPoint target_point;
         // 如果成功获取目标点，则执行速度控制
@@ -1326,23 +1329,17 @@ bool RoboticTask::handle_idle_state() {
                     
                 }
                 catch(const std::exception& e) {
-                    RCLCPP_WARN(node->get_logger(), " %s", e.what());
+                    RCLCPP_WARN(node->get_logger(), " Kinetic compensation failure %s", e.what());
                 }
             }
-
-
-
-
 
             // 发送速度命令到控制器：将速度转换为Eigen向量
             Eigen::VectorXd joint_velocities_eigen(6);
             for(size_t i = 0 ; i < 6 ; ++i){
                 joint_velocities_eigen(i) = joint_velocities[i];
             }
+
             // 调用硬件接口发送关节速度命令
-
-            
-
             send_joint_velocity_to_hardware(joint_velocities_eigen);
         }
         // 睡眠以维持100Hz频率
@@ -1402,10 +1399,72 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
         count ++;
     } while (success != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
     
-    if (success == moveit::core::MoveItErrorCode::SUCCESS) {
-        move_group_interface->execute(plan);
-    }
-    
+    const double dt = 1.0 / dynamics_params_.control_frequency;
+    Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+    Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+    robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+    robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+    rclcpp::Rate rate(100);
+    auto start_time = node->now();
+    double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                 plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+    while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+        Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+            move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+        Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+        trajectory_msgs::msg::JointTrajectoryPoint target_point;
+        if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+            std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+            std::vector<double> joint_velocities(6);
+            double dt = 0.01;
+            double kp = 100.0;
+            Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+            bool use_torque_control = false;
+            for(size_t i = 0 ; i < 6 ; ++i){
+                double position_error = target_point.positions[i] - current_joint_positions[i];
+                double feedforward_velocity = target_point.velocities[i];
+                double feedback_velocity = kp * position_error;
+                joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                current_joint_velocities[i] = joint_velocities[i];
+            }
+
+            if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                try{
+                    Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                    Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                        current_joint_positions_, current_joint_velocities);
+                    if (!target_point.accelerations.empty()){
+                        Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                        for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                            joint_acceleration[i] = target_point.accelerations[i];
+                        }
+                        dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                            current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                        }
+                    }
+                } catch (const std::exception& e){
+                    RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                }
+            }
+
+            Eigen::VectorXd joint_velocities_eigen(6);
+            for(size_t i = 0 ; i < 6 ; ++i){
+                joint_velocities_eigen(i) = joint_velocities[i];
+            }
+
+            send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+        }
+
+        rate.sleep();
+    }    
+
+    Eigen::VectorXd zero_velocities(6);
+    zero_velocities.setZero();
+    send_joint_velocity_to_hardware(zero_velocities);
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     
     return !cancle_current_task.load();
@@ -1576,6 +1635,8 @@ bool RoboticTask::handle_move_to_catch_point() {
     return !cancle_current_task.load();
 }
 
+
+
 /**
  * @brief 处理抓取车上物块
  * 
@@ -1588,6 +1649,10 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
         case 0:
             RCLCPP_ERROR(node->get_logger(), "KFS == 0, 没有KFS可供 抓取");
             break;
+
+        //**
+        // 检索四：抓取车上KFS位置
+        //*/ 
         case 1:
             {
             Eigen::VectorXd kfs1_touch_pos(6);
@@ -1607,9 +1672,73 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                 return false;
             }
 
-            do {
-                move_group_interface->execute(plan);
-            }while (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+            const double dt = 1.0 / dynamics_params_.control_frequency;
+            Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+            Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+            robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+            robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+            rclcpp::Rate rate(100);
+            auto start_time = node->now();
+            double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                        plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+            while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+                Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                    move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+                Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+                trajectory_msgs::msg::JointTrajectoryPoint target_point;
+                if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                    std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                    std::vector<double> joint_velocities(6);
+                    double dt = 0.01;
+                    double kp = 100.0;
+                    Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                    bool use_torque_control = false;
+                    for(size_t i = 0 ; i < 6 ; ++i){
+                        double position_error = target_point.positions[i] - current_joint_positions[i];
+                        double feedforward_velocity = target_point.velocities[i];
+                        double feedback_velocity = kp * position_error;
+                        joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                        current_joint_velocities[i] = joint_velocities[i];
+                    }
+
+                    if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                        try{
+                            Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                            Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                                current_joint_positions_, current_joint_velocities);
+                            if (!target_point.accelerations.empty()){
+                                Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                                for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                                    joint_acceleration[i] = target_point.accelerations[i];
+                                }
+                                dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                    current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                                for(size_t i = 0 ; i < 6 ; ++i){
+                                    joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                                }
+                            }
+                        } catch (const std::exception& e){
+                            RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                        }
+                    }
+
+                    Eigen::VectorXd joint_velocities_eigen(6);
+                    for(size_t i = 0 ; i < 6 ; ++i){
+                        joint_velocities_eigen(i) = joint_velocities[i];
+                    }
+
+                    send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+                }
+
+                rate.sleep();
+            }    
+
+            Eigen::VectorXd zero_velocities(6);
+            zero_velocities.setZero();
+            send_joint_velocity_to_hardware(zero_velocities);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
             return true;
 
@@ -1634,9 +1763,73 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                 return false;
             }
 
-            do {
-                move_group_interface->execute(plan);
-            }while (error_code == moveit::core::MoveItErrorCode::SUCCESS);
+            const double dt = 1.0 / dynamics_params_.control_frequency;
+            Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+            Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+            robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+            robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+            rclcpp::Rate rate(100);
+            auto start_time = node->now();
+            double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                        plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+            while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+                Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                    move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+                Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+                trajectory_msgs::msg::JointTrajectoryPoint target_point;
+                if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                    std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                    std::vector<double> joint_velocities(6);
+                    double dt = 0.01;
+                    double kp = 100.0;
+                    Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                    bool use_torque_control = false;
+                    for(size_t i = 0 ; i < 6 ; ++i){
+                        double position_error = target_point.positions[i] - current_joint_positions[i];
+                        double feedforward_velocity = target_point.velocities[i];
+                        double feedback_velocity = kp * position_error;
+                        joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                        current_joint_velocities[i] = joint_velocities[i];
+                    }
+
+                    if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                        try{
+                            Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                            Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                                current_joint_positions_, current_joint_velocities);
+                            if (!target_point.accelerations.empty()){
+                                Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                                for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                                    joint_acceleration[i] = target_point.accelerations[i];
+                                }
+                                dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                    current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                                for(size_t i = 0 ; i < 6 ; ++i){
+                                    joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                                }
+                            }
+                        } catch (const std::exception& e){
+                            RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                        }
+                    }
+
+                    Eigen::VectorXd joint_velocities_eigen(6);
+                    for(size_t i = 0 ; i < 6 ; ++i){
+                        joint_velocities_eigen(i) = joint_velocities[i];
+                    }
+
+                    send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+                }
+
+                rate.sleep();
+            }    
+
+            Eigen::VectorXd zero_velocities(6);
+            zero_velocities.setZero();
+            send_joint_velocity_to_hardware(zero_velocities);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
             return true;
             break;
@@ -1767,9 +1960,74 @@ bool RoboticTask::handle_move_to_release_point() {
                     RCLCPP_ERROR(node->get_logger(), "规划到KFS1释放位置失败");
                     return false;
                 }
-                do{
-                    move_group_interface->execute(plan);
-                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+
+                const double dt = 1.0 / dynamics_params_.control_frequency;
+                Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+                Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+                robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+                robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+                rclcpp::Rate rate(100);
+                auto start_time = node->now();
+                double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                            plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+                while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+                    Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                        move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+                    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+                    trajectory_msgs::msg::JointTrajectoryPoint target_point;
+                    if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                        std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                        std::vector<double> joint_velocities(6);
+                        double dt = 0.01;
+                        double kp = 100.0;
+                        Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                        bool use_torque_control = false;
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            double position_error = target_point.positions[i] - current_joint_positions[i];
+                            double feedforward_velocity = target_point.velocities[i];
+                            double feedback_velocity = kp * position_error;
+                            joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                            current_joint_velocities[i] = joint_velocities[i];
+                        }
+
+                        if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                            try{
+                                Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                                Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                                    current_joint_positions_, current_joint_velocities);
+                                if (!target_point.accelerations.empty()){
+                                    Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                                    for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                                        joint_acceleration[i] = target_point.accelerations[i];
+                                    }
+                                    dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                        current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                                    for(size_t i = 0 ; i < 6 ; ++i){
+                                        joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                                    }
+                                }
+                            } catch (const std::exception& e){
+                                RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                            }
+                        }
+
+                        Eigen::VectorXd joint_velocities_eigen(6);
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            joint_velocities_eigen(i) = joint_velocities[i];
+                        }
+
+                        send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+                    }
+
+                    rate.sleep();
+                }    
+
+                Eigen::VectorXd zero_velocities(6);
+                zero_velocities.setZero();
+                send_joint_velocity_to_hardware(zero_velocities);
+
                 
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1798,12 +2056,78 @@ bool RoboticTask::handle_move_to_release_point() {
                     RCLCPP_ERROR(node->get_logger(), "规划到KFS2释放位置失败");
                     return false;
                 }
-                do{
-                    move_group_interface->execute(plan);
-                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+
+                const double dt = 1.0 / dynamics_params_.control_frequency;
+                Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+                Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+                robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+                robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+                rclcpp::Rate rate(100);
+                auto start_time = node->now();
+                double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                            plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+                while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+                    Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                        move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+                    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+                    trajectory_msgs::msg::JointTrajectoryPoint target_point;
+                    if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                        std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                        std::vector<double> joint_velocities(6);
+                        double dt = 0.01;
+                        double kp = 100.0;
+                        Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                        bool use_torque_control = false;
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            double position_error = target_point.positions[i] - current_joint_positions[i];
+                            double feedforward_velocity = target_point.velocities[i];
+                            double feedback_velocity = kp * position_error;
+                            joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                            current_joint_velocities[i] = joint_velocities[i];
+                        }
+
+                        if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                            try{
+                                Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                                Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                                    current_joint_positions_, current_joint_velocities);
+                                if (!target_point.accelerations.empty()){
+                                    Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                                    for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                                        joint_acceleration[i] = target_point.accelerations[i];
+                                    }
+                                    dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                        current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                                    for(size_t i = 0 ; i < 6 ; ++i){
+                                        joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                                    }
+                                }
+                            } catch (const std::exception& e){
+                                RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                            }
+                        }
+
+                        Eigen::VectorXd joint_velocities_eigen(6);
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            joint_velocities_eigen(i) = joint_velocities[i];
+                        }
+
+                        send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+                    }
+
+                    rate.sleep();
+                }    
+
+                Eigen::VectorXd zero_velocities(6);
+                zero_velocities.setZero();
+                send_joint_velocity_to_hardware(zero_velocities);
+
                 
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                
                 return true;
 
                 break;
@@ -1829,12 +2153,78 @@ bool RoboticTask::handle_move_to_release_point() {
                     RCLCPP_ERROR(node->get_logger(), "规划到KFS3释放位置失败");
                     return false;
                 }
-                do{
-                    move_group_interface->execute(plan);
-                } while (error_code == moveit::planning_interface::MoveItErrorCode::SUCCESS);
+
+                const double dt = 1.0 / dynamics_params_.control_frequency;
+                Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+                Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+                robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+                robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+                rclcpp::Rate rate(100);
+                auto start_time = node->now();
+                double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                            plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+                while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+                    Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                        move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+                    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+                    trajectory_msgs::msg::JointTrajectoryPoint target_point;
+                    if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                        std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                        std::vector<double> joint_velocities(6);
+                        double dt = 0.01;
+                        double kp = 100.0;
+                        Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                        bool use_torque_control = false;
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            double position_error = target_point.positions[i] - current_joint_positions[i];
+                            double feedforward_velocity = target_point.velocities[i];
+                            double feedback_velocity = kp * position_error;
+                            joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                            current_joint_velocities[i] = joint_velocities[i];
+                        }
+
+                        if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                            try{
+                                Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                                Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                                    current_joint_positions_, current_joint_velocities);
+                                if (!target_point.accelerations.empty()){
+                                    Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                                    for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                                        joint_acceleration[i] = target_point.accelerations[i];
+                                    }
+                                    dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                        current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                                    for(size_t i = 0 ; i < 6 ; ++i){
+                                        joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                                    }
+                                }
+                            } catch (const std::exception& e){
+                                RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                            }
+                        }
+
+                        Eigen::VectorXd joint_velocities_eigen(6);
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            joint_velocities_eigen(i) = joint_velocities[i];
+                        }
+
+                        send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+                    }
+
+                    rate.sleep();
+                }    
+
+                Eigen::VectorXd zero_velocities(6);
+                zero_velocities.setZero();
+                send_joint_velocity_to_hardware(zero_velocities);
+
                 
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                
                 return true;
                 break;
                 }
@@ -1959,9 +2349,73 @@ bool RoboticTask::handle_move_to_idle_point() {
         return false;
     }
 
-    do{
-        move_group_interface->execute(plan);
-    } while (move_group_interface->execute(plan) != moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    const double dt = 1.0 / dynamics_params_.control_frequency;
+    Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+    Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+    robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+    robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+    rclcpp::Rate rate(100);
+    auto start_time = node->now();
+    double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+    while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+        Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+            move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+        Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+        trajectory_msgs::msg::JointTrajectoryPoint target_point;
+        if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+            std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+            std::vector<double> joint_velocities(6);
+            double dt = 0.01;
+            double kp = 100.0;
+            Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+            bool use_torque_control = false;
+            for(size_t i = 0 ; i < 6 ; ++i){
+                double position_error = target_point.positions[i] - current_joint_positions[i];
+                double feedforward_velocity = target_point.velocities[i];
+                double feedback_velocity = kp * position_error;
+                joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                current_joint_velocities[i] = joint_velocities[i];
+            }
+
+            if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                try{
+                    Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                    Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                        current_joint_positions_, current_joint_velocities);
+                    if (!target_point.accelerations.empty()){
+                        Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+                        for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
+                            joint_acceleration[i] = target_point.accelerations[i];
+                        }
+                        dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                            current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                        for(size_t i = 0 ; i < 6 ; ++i){
+                            joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                        }
+                    }
+                } catch (const std::exception& e){
+                    RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                }
+            }
+
+            Eigen::VectorXd joint_velocities_eigen(6);
+            for(size_t i = 0 ; i < 6 ; ++i){
+                joint_velocities_eigen(i) = joint_velocities[i];
+            }
+
+            send_joint_velocity_to_hardware(joint_velocities_eigen);
+
+        }
+
+        rate.sleep();
+    }    
+
+    Eigen::VectorXd zero_velocities(6);
+    zero_velocities.setZero();
+    send_joint_velocity_to_hardware(zero_velocities);
+
     
     // TODO: 执行路径规划并执行
     // 确保所有关节都在安全范围内
