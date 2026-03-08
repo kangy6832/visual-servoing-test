@@ -153,7 +153,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     try {
         kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
         std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
-        if (kdl_dynamics_->initFromURDF(urdf_path, "base_link", "tool0")) {
+        if (kdl_dynamics_->initFromURDF(urdf_path, "joint1", "joint6")) {
             RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
         } else {
             RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");
@@ -1255,8 +1255,8 @@ bool RoboticTask::handle_idle_state() {
     auto start_time = node->now();
     // 计算轨迹总持续时间：从轨迹最后一个点的时间戳获取
     // 时间戳包含秒和纳秒，需要转换
-    double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
-                                 plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;
+    double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec +    // s
+                                 plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec * 1e-9;  // ns
 
     // 主控制循环：执行轨迹直到结束
     // 循环条件：当前时间距离开始时间小于轨迹持续时间加1秒缓冲
@@ -1269,14 +1269,18 @@ bool RoboticTask::handle_idle_state() {
             // TODO: 从实际反馈获取当前关节位置
             std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
             
-            // 计算速度命令：(目标位置 - 当前位置) / 时间步长
-            // 使用简单的比例控制计算关节速度
+
             std::vector<double> joint_velocities(6);
             // 时间步长：10ms，对应100Hz控制频率
             double dt = 0.01;
+            double kp = 100.0;
             // 对每个关节计算速度
             for(size_t i = 0 ; i < 6 ; ++i){
-                joint_velocities[i] = (target_point.positions[i] - current_joint_positions[i]) / dt;
+                double position_error = target_point.positions[i] - current_joint_positions[i];
+                double feedforward_velocity = target_point.velocities[i];
+                double feedback_velocity = kp * position_error;
+
+                joint_velocities[i] = feedforward_velocity + feedback_velocity;
             }
 
             // 发送速度命令到控制器：将速度转换为Eigen向量
@@ -1285,6 +1289,11 @@ bool RoboticTask::handle_idle_state() {
                 joint_velocities_eigen(i) = joint_velocities[i];
             }
             // 调用硬件接口发送关节速度命令
+
+            Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+            
+            if(kdl_dynamics_ && kdl_dynamics_->isInitialized())
+
             send_joint_velocity_to_hardware(joint_velocities_eigen);
         }
         // 睡眠以维持100Hz频率

@@ -339,6 +339,7 @@ namespace robotic_task {
                 double emergency_stop_threshold = 100.0;   // 紧急停止阈值
                 bool enable_dynamics_compensation = true;   // 启用动力学补偿
                 bool enable_acceleration_control = true;    // 启用加速度控制
+                double trajectory_kp = 100.0;               // 轨迹跟踪比例增益
             } dynamics_params_;
 
             // 末端速度
