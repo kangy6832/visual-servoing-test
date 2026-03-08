@@ -19,6 +19,7 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
+#include <Eigen/src/Core/util/Constants.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <cassert>
 #include <geometry_msgs/msg/detail/pose__struct.hpp>
@@ -1216,6 +1217,14 @@ bool RoboticTask::handle_idle_state() {
     // 设置MoveIt的目标关节值
     move_group_interface->setJointValueTarget(idle_joints_vec);
 
+    const double dt = 1.0 / dynamics_params_.control_frequency;
+    Eigen::VectorXd current_joint_positions_ = get_joint_position();
+    Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+    Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+    Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+    
+
+
     // 规划到空闲位置：使用MoveIt规划从当前位置到空闲位置的轨迹
     // 创建规划对象
     moveit::planning_interface::MoveGroupInterface::Plan plan;
@@ -1253,6 +1262,9 @@ bool RoboticTask::handle_idle_state() {
     rclcpp::Rate rate(100); // 100Hz控制频率
     // 记录轨迹开始时间
     auto start_time = node->now();
+
+
+
     // 计算轨迹总持续时间：从轨迹最后一个点的时间戳获取
     // 时间戳包含秒和纳秒，需要转换
     double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec +    // s
@@ -1275,13 +1287,52 @@ bool RoboticTask::handle_idle_state() {
             double dt = 0.01;
             double kp = 100.0;
             // 对每个关节计算速度
+
+            Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+            bool use_torque_control = false;
+
             for(size_t i = 0 ; i < 6 ; ++i){
                 double position_error = target_point.positions[i] - current_joint_positions[i];
                 double feedforward_velocity = target_point.velocities[i];
                 double feedback_velocity = kp * position_error;
 
                 joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                current_joint_velocities[i] = joint_velocities[i];
+            } 
+
+            if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                try {
+                    Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                    Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                        current_joint_positions_, current_joint_velocities);
+                    
+                    // 从轨迹点获取关节加速度
+                    if (!target_point.accelerations.empty()) {
+                        Eigen::VectorXd joint_accelerations(target_point.accelerations.size());
+                        for (size_t i = 0; i < target_point.accelerations.size(); ++i) {
+                            joint_accelerations(i) = target_point.accelerations[i];
+                        }
+                        
+                        // 计算完整的动力学力矩
+                        dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                            current_joint_positions_, current_joint_velocities, joint_accelerations);
+                        
+                        // 应用动力学补偿增益调整关节速度
+                        for (size_t i = 0; i < 6; ++i) {
+                            joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                        }
+                    }
+                    
+                    
+                }
+                catch(const std::exception& e) {
+                    RCLCPP_WARN(node->get_logger(), " %s", e.what());
+                }
             }
+
+
+
+
 
             // 发送速度命令到控制器：将速度转换为Eigen向量
             Eigen::VectorXd joint_velocities_eigen(6);
@@ -1290,9 +1341,7 @@ bool RoboticTask::handle_idle_state() {
             }
             // 调用硬件接口发送关节速度命令
 
-            Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
             
-            if(kdl_dynamics_ && kdl_dynamics_->isInitialized())
 
             send_joint_velocity_to_hardware(joint_velocities_eigen);
         }
