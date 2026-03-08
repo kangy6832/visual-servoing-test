@@ -18,6 +18,9 @@
 #include <kdl/jntspaceinertiamatrix.hpp>
 #include <kdl/jntarrayvel.hpp>
 #include <kdl/frames.hpp>
+#include <kdl/jacobian.hpp>
+#include <kdl/chainjnttojacsolver.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
 #include <Eigen/Dense>
 #include <urdf/model.h>
 #include <kdl_parser/kdl_parser.hpp>
@@ -68,6 +71,7 @@ public:
     Eigen::VectorXd calculateGravityCompensation(
         const Eigen::VectorXd& joint_positions
     );
+
 
     /**
      * @brief 计算科氏力和离心力补偿
@@ -120,6 +124,20 @@ public:
     );
 
     /**
+     * @brief 计算末端附加载荷的重力补偿力矩
+     *
+     * @param joint_positions 关节位置
+     * @param payload_mass 负载质量(kg)
+     * @param payload_com_in_ee 负载质心在末端坐标系中的偏移(m)
+     * @return 关节补偿力矩
+     */
+    Eigen::VectorXd calculatePayloadGravityCompensation(
+        const Eigen::VectorXd& joint_positions,
+        double payload_mass,
+        const Eigen::Vector3d& payload_com_in_ee = Eigen::Vector3d::Zero()
+    );
+
+    /**
      * @brief 检查是否已初始化
      * @return true 已初始化
      */
@@ -145,6 +163,8 @@ private:
     // KDL组件
     std::unique_ptr<KDL::Chain> chain_;
     std::unique_ptr<KDL::ChainDynParam> dynamics_solver_;
+    std::unique_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
+    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
 
     // 内部状态
     size_t num_joints_;
@@ -156,11 +176,14 @@ private:
     mutable KDL::JntArray kdl_gravity_torques_;
     mutable KDL::JntArray kdl_coriolis_torques_;
     mutable KDL::JntSpaceInertiaMatrix kdl_inertia_matrix_;
+    mutable KDL::Jacobian kdl_jacobian_;
+    mutable KDL::Frame kdl_end_effector_frame_;
 
     // Eigen数据容器
     mutable Eigen::VectorXd last_gravity_compensation_;
     mutable Eigen::VectorXd last_coriolis_compensation_;
     mutable Eigen::MatrixXd last_inertia_matrix_;
+    mutable Eigen::VectorXd last_payload_gravity_compensation_;
 };
 
 } // namespace robotic_task

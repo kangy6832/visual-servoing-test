@@ -294,6 +294,7 @@ rclcpp_action::CancelResponse RoboticTask::cancel_goal(
     // 清理碰撞对象和气泵
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
     set_air_pump(false);
+    has_attached_kfs_ = false;
 
     return rclcpp_action::CancelResponse::ACCEPT;
 }
@@ -1063,37 +1064,7 @@ void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedP
 }
 
 
-// ==================== 状态机相关函数实现 ====================
-//**
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-//  TODO: 真实的状态机实现逻辑
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
+// ==================== 状态机相关函数实现 ==============
 // 
 //  */
 
@@ -1319,6 +1290,7 @@ bool RoboticTask::handle_idle_state() {
                         // 计算完整的动力学力矩
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_accelerations);
+                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
                         
                         // 应用动力学补偿增益调整关节速度
                         for (size_t i = 0; i < 6; ++i) {
@@ -1440,6 +1412,7 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
                         }
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_acceleration);
+                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                         for(size_t i = 0 ; i < 6 ; ++i){
                             joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1568,6 +1541,7 @@ bool RoboticTask::handle_move_to_catch_point() {
                 // 计算完整的动力学力矩
                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                     current_joint_positions, current_joint_velocities, joint_accelerations);
+                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions);
                 
                 // 安全检查：关节力矩限制
                 if (!checkJointTorqueLimits(dynamics_torque)) {
@@ -1713,6 +1687,7 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                                 }
                                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                     current_joint_positions_, current_joint_velocities, joint_acceleration);
+                                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                 for(size_t i = 0 ; i < 6 ; ++i){
                                     joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1804,6 +1779,7 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                                 }
                                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                     current_joint_positions_, current_joint_velocities, joint_acceleration);
+                                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                 for(size_t i = 0 ; i < 6 ; ++i){
                                     joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1890,7 +1866,12 @@ bool RoboticTask::handle_catch_target() {
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
     
     // 添加附加碰撞对象（表示携带的物体）
-    add_attached_kfs_collision();
+    if (!add_attached_kfs_collision()) {
+        RCLCPP_WARN(node->get_logger(), "附加KFS碰撞体添加失败，附载补偿将不会启用");
+        has_attached_kfs_ = false;
+    } else {
+        has_attached_kfs_ = true;
+    }
     
     // 验证抓取是否成功
     if(!verify_grasp_success()) {
@@ -2002,6 +1983,7 @@ bool RoboticTask::handle_move_to_release_point() {
                                     }
                                     dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                         current_joint_positions_, current_joint_velocities, joint_acceleration);
+                                    dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                     for(size_t i = 0 ; i < 6 ; ++i){
                                         joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -2098,6 +2080,7 @@ bool RoboticTask::handle_move_to_release_point() {
                                     }
                                     dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                         current_joint_positions_, current_joint_velocities, joint_acceleration);
+                                    dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                     for(size_t i = 0 ; i < 6 ; ++i){
                                         joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -2195,6 +2178,7 @@ bool RoboticTask::handle_move_to_release_point() {
                                     }
                                     dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                         current_joint_positions_, current_joint_velocities, joint_acceleration);
+                                    dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                     for(size_t i = 0 ; i < 6 ; ++i){
                                         joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -2289,6 +2273,7 @@ bool RoboticTask::handle_release_target() {
     
     // Remove attached collision object
     remove_attached_kfs_collision();
+    has_attached_kfs_ = false;
     
     // 移除碰撞对象
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
@@ -2390,6 +2375,7 @@ bool RoboticTask::handle_move_to_idle_point() {
                         }
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_acceleration);
+                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                         for(size_t i = 0 ; i < 6 ; ++i){
                             joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -2614,13 +2600,29 @@ bool RoboticTask::checkEmergencyStop(
     return false;
 }
 
+Eigen::VectorXd RoboticTask::calculate_kfs_payload_compensation(
+    const Eigen::VectorXd& joint_positions
+) const {
+    if (!has_attached_kfs_ || !kdl_dynamics_ || !kdl_dynamics_->isInitialized()) {
+        return Eigen::VectorXd::Zero(6);
+    }
+
+    try {
+        return kdl_dynamics_->calculatePayloadGravityCompensation(
+            joint_positions,
+            dynamics_params_.kfs_payload_mass,
+            kfs_payload_com_in_ee_
+        );
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(node->get_logger(), "KFS附载重力补偿计算失败: %s", e.what());
+        return Eigen::VectorXd::Zero(6);
+    }
+}
+
 void RoboticTask::updateDynamicsParams(const DynamicsControlParams& params) {
     dynamics_params_ = params;
     RCLCPP_INFO(node->get_logger(), "动力学控制参数已更新");
 }
-
-
-
 
 
 

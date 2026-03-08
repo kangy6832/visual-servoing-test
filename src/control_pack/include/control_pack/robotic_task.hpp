@@ -340,7 +340,13 @@ namespace robotic_task {
                 bool enable_dynamics_compensation = true;   // 启用动力学补偿
                 bool enable_acceleration_control = true;    // 启用加速度控制
                 double trajectory_kp = 100.0;               // 轨迹跟踪比例增益
+                double kfs_payload_mass = 0.50;             // kg 抓取KFS后的附载质量
             } dynamics_params_;
+
+            // 抓取后是否存在附载（用于附加载荷重力补偿）
+            bool has_attached_kfs_{false};
+            // KFS质心在末端执行器坐标系中的偏移（m）
+            Eigen::Vector3d kfs_payload_com_in_ee_{0.0, 0.0, -0.24};
 
             // 末端速度
             Eigen::Vector3d end_effector_velocity;
@@ -470,6 +476,16 @@ namespace robotic_task {
                 const Eigen::VectorXd& joint_positions,
                 const Eigen::VectorXd& joint_velocities,
                 const Eigen::VectorXd& joint_accelerations
+            ) const;
+
+            /**
+            * @brief 计算抓取KFS后的附加载荷重力补偿
+            *
+            * @param joint_positions 当前关节位置
+            * @return 由KFS附载引入的关节力矩补偿
+            */
+            Eigen::VectorXd calculate_kfs_payload_compensation(
+                const Eigen::VectorXd& joint_positions
             ) const;
 
             /**

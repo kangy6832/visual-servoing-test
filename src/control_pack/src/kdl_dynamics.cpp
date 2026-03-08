@@ -53,6 +53,8 @@ void KDLDynamics::initSolvers() {
     // 初始化动力学参数求解器，在构造函数中设置重力向量
     KDL::Vector gravity_vector(0, 0, -9.81);
     dynamics_solver_ = std::make_unique<KDL::ChainDynParam>(*chain_, gravity_vector);
+    jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(*chain_);
+    fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(*chain_);
     
     // 预分配内存
     kdl_joint_positions_.resize(num_joints_);
@@ -60,11 +62,13 @@ void KDLDynamics::initSolvers() {
     kdl_gravity_torques_.resize(num_joints_);
     kdl_coriolis_torques_.resize(num_joints_);
     kdl_inertia_matrix_.resize(num_joints_);
+    kdl_jacobian_.resize(num_joints_);
     
     // 预分配Eigen容器
     last_gravity_compensation_.resize(num_joints_);
     last_coriolis_compensation_.resize(num_joints_);
     last_inertia_matrix_.resize(num_joints_, num_joints_);
+    last_payload_gravity_compensation_.resize(num_joints_);
 }
 
 Eigen::VectorXd KDLDynamics::calculateGravityCompensation(
@@ -94,6 +98,7 @@ Eigen::VectorXd KDLDynamics::calculateGravityCompensation(
     
     return last_gravity_compensation_;
 }
+
 
 Eigen::VectorXd KDLDynamics::calculateCoriolisCompensation(
     const Eigen::VectorXd& joint_positions,
@@ -213,6 +218,62 @@ Eigen::VectorXd KDLDynamics::calculateDynamicsTorque(
     return (inertia_torque + coriolis_torque + gravity_torque);
 }
 
+Eigen::VectorXd KDLDynamics::calculatePayloadGravityCompensation(
+    const Eigen::VectorXd& joint_positions,
+    double payload_mass,
+    const Eigen::Vector3d& payload_com_in_ee) {
+
+    // 检查KDLDynamics对象是否已初始化，未初始化则抛出异常
+    if (!is_initialized_) {
+        throw std::runtime_error("KDLDynamics not initialized");
+    }
+
+    // 验证输入的关节位置数据
+    validateInput(joint_positions, "calculatePayloadGravityCompensation");
+
+    // 如果负载质量小于等于零，返回零向量作为补偿值
+    if (payload_mass <= 0.0) {
+        return Eigen::VectorXd::Zero(static_cast<Eigen::Index>(num_joints_));
+    }
+
+    // 将输入的关节位置数据复制到KDL格式的关节位置对象中
+    for (size_t i = 0; i < num_joints_; ++i) {
+        kdl_joint_positions_(i) = joint_positions(i);
+    }
+
+    // 计算末端执行器的位姿，如果计算失败则抛出异常
+    int fk_ret = fk_solver_->JntToCart(kdl_joint_positions_, kdl_end_effector_frame_);
+    if (fk_ret < 0) {
+        throw std::runtime_error("Failed to calculate end-effector frame, error code: " + std::to_string(fk_ret));
+    }
+
+    // 计算雅可比矩阵，如果计算失败则抛出异常
+    int jac_ret = jacobian_solver_->JntToJac(kdl_joint_positions_, kdl_jacobian_);
+    if (jac_ret < 0) {
+        throw std::runtime_error("Failed to calculate Jacobian, error code: " + std::to_string(jac_ret));
+    }
+
+    // 定义负载在基坐标系中的重力力
+    const KDL::Vector force_base(0.0, 0.0, -payload_mass * 9.81);
+    // 计算负载质心在基坐标系中的偏移量
+    const KDL::Vector com_offset_base = kdl_end_effector_frame_.M * KDL::Vector(
+        payload_com_in_ee.x(), payload_com_in_ee.y(), payload_com_in_ee.z());
+    // 计算负载在基坐标系中的力矩
+    const KDL::Vector moment_base = com_offset_base * force_base; // r x F
+
+    // 定义负载的力/力矩 wrench
+    Eigen::Matrix<double, 6, 1> wrench;
+    wrench << force_base.x(), force_base.y(), force_base.z(),
+              moment_base.x(), moment_base.y(), moment_base.z();
+
+    // 映射雅可比矩阵数据到Eigen格式的矩阵中
+    Eigen::Map<const Eigen::Matrix<double, 6, Eigen::Dynamic>> jacobian_map(
+        kdl_jacobian_.data.data(), 6, static_cast<Eigen::Index>(num_joints_));
+
+    // 计算负载重力补偿并返回
+    last_payload_gravity_compensation_ = jacobian_map.transpose() * wrench;
+    return last_payload_gravity_compensation_;
+}
 void KDLDynamics::validateInput(const Eigen::VectorXd& data, const std::string& context) const {
     if (static_cast<size_t>(data.size()) != num_joints_) {
         std::stringstream ss;
