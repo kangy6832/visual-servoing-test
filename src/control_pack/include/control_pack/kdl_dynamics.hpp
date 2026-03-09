@@ -93,6 +93,7 @@ public:
      */
     Eigen::MatrixXd calculateInertiaMatrix(const Eigen::VectorXd& joint_positions);
 
+
     /**
      * @brief 计算关节加速度（基于末端恒定加速度）
      * 
@@ -108,6 +109,7 @@ public:
         const Eigen::Vector3d& end_effector_acceleration,
         const Eigen::MatrixXd& jacobian
     );
+    
 
     /**
      * @brief 计算完整的动力学力矩
@@ -161,29 +163,30 @@ private:
     void validateInput(const Eigen::VectorXd& data, const std::string& context) const;
 
     // KDL组件
-    std::unique_ptr<KDL::Chain> chain_;
-    std::unique_ptr<KDL::ChainDynParam> dynamics_solver_;
-    std::unique_ptr<KDL::ChainJntToJacSolver> jacobian_solver_;
-    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_;
+    std::unique_ptr<KDL::Chain> chain_; ///< KDL运动链，表示机器人的运动学结构
+    std::unique_ptr<KDL::ChainDynParam> dynamics_solver_; ///< KDL动力学求解器，用于计算重力、科氏力和惯性矩阵
+    std::unique_ptr<KDL::ChainJntToJacSolver> jacobian_solver_; ///< 雅可比矩阵求解器，用于计算末端速度与关节速度的关系
+    std::unique_ptr<KDL::ChainFkSolverPos_recursive> fk_solver_; ///< 正向运动学求解器，用于计算机器人末端位姿
 
     // 内部状态
-    size_t num_joints_;
-    bool is_initialized_;
+    size_t num_joints_; ///< 关节数量
+    bool is_initialized_; ///< 初始化状态标志，true表示已成功初始化
 
     // KDL数据容器（预分配以避免运行时分配）
-    mutable KDL::JntArray kdl_joint_positions_;
-    mutable KDL::JntArray kdl_joint_velocities_;
-    mutable KDL::JntArray kdl_gravity_torques_;
-    mutable KDL::JntArray kdl_coriolis_torques_;
-    mutable KDL::JntSpaceInertiaMatrix kdl_inertia_matrix_;
-    mutable KDL::Jacobian kdl_jacobian_;
-    mutable KDL::Frame kdl_end_effector_frame_;
+    mutable KDL::JntArray kdl_joint_positions_; ///< 预分配的KDL关节位置容器
+    mutable KDL::JntArray kdl_joint_velocities_; ///< 预分配的KDL关节速度容器
+    mutable KDL::JntArray kdl_gravity_torques_; ///< 预分配的KDL重力力矩容器
+    mutable KDL::JntArray kdl_coriolis_torques_; ///< 预分配的KDL科氏力力矩容器
+
+    mutable KDL::JntSpaceInertiaMatrix kdl_inertia_matrix_; ///< 预分配的KDL惯性矩阵容器
+    mutable KDL::Jacobian kdl_jacobian_; ///< 预分配的KDL雅可比矩阵容器
+    mutable KDL::Frame kdl_end_effector_frame_; ///< 预分配的KDL末端执行器位姿容器
 
     // Eigen数据容器
-    mutable Eigen::VectorXd last_gravity_compensation_;
-    mutable Eigen::VectorXd last_coriolis_compensation_;
-    mutable Eigen::MatrixXd last_inertia_matrix_;
-    mutable Eigen::VectorXd last_payload_gravity_compensation_;
+    mutable Eigen::VectorXd last_gravity_compensation_; ///< 缓存的上一次重力补偿计算结果
+    mutable Eigen::VectorXd last_coriolis_compensation_; ///< 缓存的上一次科氏力补偿计算结果
+    mutable Eigen::MatrixXd last_inertia_matrix_; ///< 缓存的上一次惯性矩阵计算结果
+    mutable Eigen::VectorXd last_payload_gravity_compensation_; ///< 缓存的上一次负载重力补偿计算结果
 };
 
 } // namespace robotic_task

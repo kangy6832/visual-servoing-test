@@ -23,28 +23,41 @@ bool KDLDynamics::initFromURDF(const std::string& urdf_path,
                              const std::string& base_link, 
                              const std::string& tip_link) {
     try {
-        // 从URDF文件创建KDL树
+        // 从URDF文件创建KDL树结构
+        // URDF文件包含机器人的完整运动学和动力学信息
+        // KDL::Tree表示机器人的层次结构，包括所有连杆和关节
         KDL::Tree kdl_tree;
         if (!kdl_parser::treeFromFile(urdf_path, kdl_tree)) {
             throw std::runtime_error("Failed to parse URDF file: " + urdf_path);
         }
 
-        // 从树中提取链
+        // 从完整的机器人树中提取指定的运动链
+        // 运动链是从基座(base_link)到末端(tip_link)的连续关节序列
+        // 这是动力学计算的核心部分，只关心从基座到末端执行器的路径
         chain_ = std::make_unique<KDL::Chain>();
         if (!kdl_tree.getChain(base_link, tip_link, *chain_)) {
             throw std::runtime_error("Failed to extract chain from " + base_link + 
                                 " to " + tip_link);
         }
 
+        // 获取运动链中的关节数量
+        // 这个数量决定了所有动力学向量和矩阵的维度
+        // 包括：关节位置向量、速度向量、力矩向量、惯性矩阵等
         num_joints_ = chain_->getNrOfJoints();
         
-        // 初始化求解器
+        // 初始化各种KDL求解器
+        // 包括：动力学参数求解器、雅可比矩阵求解器、正向运动学求解器
+        // 这些求解器将在后续的动力学计算中使用
         initSolvers();
 
+        // 标记初始化完成
+        // 只有设置了这个标志，才能进行后续的动力学计算
         is_initialized_ = true;
         return true;
 
     } catch (const std::exception& e) {
+        // 捕获并重新抛出异常，添加上下文信息
+        // 这样调用者能够知道初始化失败的具体原因
         throw std::runtime_error("KDLDynamics initialization failed: " + std::string(e.what()));
     }
 }
@@ -74,28 +87,44 @@ void KDLDynamics::initSolvers() {
 Eigen::VectorXd KDLDynamics::calculateGravityCompensation(
     const Eigen::VectorXd& joint_positions) {
     
+    // 检查KDL动力学求解器是否已正确初始化
+    // 必须先调用initialize()方法设置机器人模型和重力参数
     if (!is_initialized_) {
         throw std::runtime_error("KDLDynamics not initialized");
     }
     
+    // 验证输入关节位置向量的有效性
+    // 确保向量大小等于关节数量，且不包含NaN或无穷值
     validateInput(joint_positions, "calculateGravityCompensation");
     
-    // 转换为KDL格式
+    // 将Eigen格式的关节位置转换为KDL格式
+    // KDL使用自己的JntArray类型进行动力学计算
+    // 这里逐元素复制数据以确保类型安全
     for (size_t i = 0; i < num_joints_; ++i) {
         kdl_joint_positions_(i) = joint_positions(i);
     }
     
-    // 计算重力力矩（重力向量在初始化时已设置）
+    // 使用KDL动力学求解器计算重力补偿力矩
+    // JntToGravity考虑以下因素：
+    // 1. 机器人各连杆的质量和质心位置
+    // 2. 各关节的当前位姿
+    // 3. 重力向量（在初始化时设置，通常为[0, 0, -9.81]）
+    // 返回值：0表示成功，负值表示错误
     int ret = dynamics_solver_->JntToGravity(kdl_joint_positions_, kdl_gravity_torques_);
     if (ret < 0) {
         throw std::runtime_error("Failed to calculate gravity compensation, error code: " + std::to_string(ret));
     }
     
-    // 转换回Eigen格式
+    // 将计算结果从KDL格式转换回Eigen格式
+    // 这样便于在其他使用Eigen的模块中使用
+    // 同时保存到last_gravity_compensation_供后续使用
     for (size_t i = 0; i < num_joints_; ++i) {
         last_gravity_compensation_(i) = kdl_gravity_torques_(i);
     }
     
+    // 返回重力补偿力矩向量
+    // 每个元素对应一个关节的补偿力矩（单位：N·m）
+    // 正值表示抵抗重力的力矩方向
     return last_gravity_compensation_;
 }
 
@@ -274,6 +303,8 @@ Eigen::VectorXd KDLDynamics::calculatePayloadGravityCompensation(
     last_payload_gravity_compensation_ = jacobian_map.transpose() * wrench;
     return last_payload_gravity_compensation_;
 }
+
+
 void KDLDynamics::validateInput(const Eigen::VectorXd& data, const std::string& context) const {
     if (static_cast<size_t>(data.size()) != num_joints_) {
         std::stringstream ss;

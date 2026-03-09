@@ -1290,7 +1290,6 @@ bool RoboticTask::handle_idle_state() {
                         // 计算完整的动力学力矩
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_accelerations);
-                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
                         
                         // 应用动力学补偿增益调整关节速度
                         for (size_t i = 0; i < 6; ++i) {
@@ -1412,7 +1411,6 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
                         }
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_acceleration);
-                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                         for(size_t i = 0 ; i < 6 ; ++i){
                             joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1541,7 +1539,6 @@ bool RoboticTask::handle_move_to_catch_point() {
                 // 计算完整的动力学力矩
                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                     current_joint_positions, current_joint_velocities, joint_accelerations);
-                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions);
                 
                 // 安全检查：关节力矩限制
                 if (!checkJointTorqueLimits(dynamics_torque)) {
@@ -1687,7 +1684,6 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                                 }
                                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                     current_joint_positions_, current_joint_velocities, joint_acceleration);
-                                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                 for(size_t i = 0 ; i < 6 ; ++i){
                                     joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1779,7 +1775,6 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
                                 }
                                 dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                                     current_joint_positions_, current_joint_velocities, joint_acceleration);
-                                dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                                 for(size_t i = 0 ; i < 6 ; ++i){
                                     joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -1943,6 +1938,8 @@ bool RoboticTask::handle_move_to_release_point() {
                 }
 
                 const double dt = 1.0 / dynamics_params_.control_frequency;
+
+
                 Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
                 Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
                 robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
@@ -1976,6 +1973,8 @@ bool RoboticTask::handle_move_to_release_point() {
                                 Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
                                 Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
                                     current_joint_positions_, current_joint_velocities);
+
+                                
                                 if (!target_point.accelerations.empty()){
                                     Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
                                     for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
@@ -2040,6 +2039,8 @@ bool RoboticTask::handle_move_to_release_point() {
                 }
 
                 const double dt = 1.0 / dynamics_params_.control_frequency;
+
+
                 Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
                 Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
                 robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
@@ -2073,6 +2074,8 @@ bool RoboticTask::handle_move_to_release_point() {
                                 Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
                                 Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
                                     current_joint_positions_, current_joint_velocities);
+
+                                
                                 if (!target_point.accelerations.empty()){
                                     Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
                                     for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
@@ -2138,6 +2141,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 }
 
                 const double dt = 1.0 / dynamics_params_.control_frequency;
+
                 Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
                 Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
                 robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
@@ -2151,6 +2155,7 @@ bool RoboticTask::handle_move_to_release_point() {
                         move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
                     Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
                     trajectory_msgs::msg::JointTrajectoryPoint target_point;
+
                     if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
                         std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
                         std::vector<double> joint_velocities(6);
@@ -2171,6 +2176,7 @@ bool RoboticTask::handle_move_to_release_point() {
                                 Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
                                 Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
                                     current_joint_positions_, current_joint_velocities);
+                                
                                 if (!target_point.accelerations.empty()){
                                     Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
                                     for(size_t i = 0 ; i < target_point.accelerations.size(); ++i){
@@ -2224,7 +2230,103 @@ bool RoboticTask::handle_move_to_release_point() {
     } else if (static_cast<int>(current_task_type.load()) == ArmTask::ROBOTIC_ARM_TASK_PLACE_TARGET) {
         // 放置任务：释放到指定位置
         // TODO: 使用任务目标作为释放位置
+        //**
+        // 检索七：架子上的释放位置
+        //*/
         release_pose = task_target_pos;
+        move_group_interface->setPoseTarget(release_pose);
+        moveit::planning_interface::MoveGroupInterface::Plan plan;
+        moveit::planning_interface::MoveItErrorCode error_code = move_group_interface->plan(plan);
+        count = 0;
+
+        do{
+            error_code = move_group_interface->plan(plan);
+            count += 1;
+        } while (!error_code == moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+
+        if(error_code != moveit::core::MoveItErrorCode::SUCCESS){
+            RCLCPP_WARN(node->get_logger(), "Failed to plan path for place target");
+            return false;
+        }
+
+        const double dt = 1.0 / dynamics_params_.control_frequency;
+        Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
+        Eigen::VectorXd ee_acceleration = Eigen::VectorXd::Zero(6);
+        robot_pose_polynomial_ContinuousTrajectory.set_trajectory(plan.trajectory_.joint_trajectory);
+        robot_pose_polynomial_ContinuousTrajectory.start_track(node->now());
+        rclcpp::Rate rate(100);
+
+        auto start_time = node->now();
+        double trajectory_duration = plan.trajectory_.joint_trajectory.points.back().time_from_start.sec + 
+                                     plan.trajectory_.joint_trajectory.points.back().time_from_start.nanosec / 1e9;
+
+        while ((node->now() - start_time).seconds() < trajectory_duration + 1.0){
+            Eigen::VectorXd current_joint_positions_ = Eigen::Map<Eigen::VectorXd>(
+                move_group_interface->getCurrentJointValues().data(), move_group_interface->getCurrentJointValues().size());
+
+            Eigen::MatrixXd jacobian = velocity_ik_generator_RobotArmKinematics.computeJacobian(current_joint_positions_);
+
+            trajectory_msgs::msg::JointTrajectoryPoint target_point;
+            if(robot_pose_polynomial_ContinuousTrajectory.get_target(node->now(), target_point)){
+                std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
+                std::vector<double> joint_velocities(6);
+                
+                double dt = 0.01;
+                double kp = 100.0;
+                Eigen::VectorXd dynamics_torque = Eigen::VectorXd::Zero(6);
+                bool use_torque_control = false;
+                for(size_t i = 0 ; i < 6 ; ++i){
+                    double position_error = target_point.positions[i] - current_joint_positions[i];
+                    double feedforward_velocity = target_point.velocities[i];
+                    double feedback_velocity = kp * position_error;
+                    joint_velocities[i] = feedforward_velocity + feedback_velocity;
+                    current_joint_velocities[i] = joint_velocities[i];
+                }
+
+                if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
+                    try{
+                        Eigen::VectorXd gravity_compensation = kdl_dynamics_->calculateGravityCompensation(current_joint_positions_);
+                        Eigen::VectorXd coriolis_compensation = kdl_dynamics_->calculateCoriolisCompensation(
+                            current_joint_positions_, current_joint_velocities);
+
+                        if (!target_point.accelerations.empty()){
+                            Eigen::VectorXd joint_acceleration(target_point.accelerations.size());
+
+                            for (size_t i = 0 ; i < target_point.accelerations.size() ; ++i){
+                                joint_acceleration[i] = target_point.accelerations[i];
+                            }
+
+                            dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
+                                current_joint_positions_, current_joint_velocities, joint_acceleration);
+
+                            dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
+
+                            for(size_t i = 0 ; i < 6 ; ++i){
+                                joint_velocities[i] = dynamics_params_.compensation_gain * dynamics_torque(i);
+                            }
+                        }
+                    } catch (const std::exception& e){
+                        RCLCPP_WARN(node->get_logger(), "Kinetic compensation failure %s", e.what());
+                    }
+
+                    Eigen::VectorXd joint_velocities_eigen(6);
+                    for(size_t i = 0 ; i < 6 ; ++i){
+                        joint_velocities_eigen(i) = joint_velocities[i];
+                    }
+
+                    send_joint_velocity_to_hardware(joint_velocities_eigen);
+                }
+
+                rate.sleep();
+            }
+
+            Eigen::VectorXd zero_velocities(6);
+            zero_velocities.setZero();
+            send_joint_velocity_to_hardware(zero_velocities);
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return true;
+        }
     }
     
     // TODO: 添加释放位置路径规划逻辑
@@ -2375,7 +2477,6 @@ bool RoboticTask::handle_move_to_idle_point() {
                         }
                         dynamics_torque = kdl_dynamics_->calculateDynamicsTorque(
                             current_joint_positions_, current_joint_velocities, joint_acceleration);
-                        dynamics_torque += calculate_kfs_payload_compensation(current_joint_positions_);
 
                         for(size_t i = 0 ; i < 6 ; ++i){
                             joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
@@ -2607,6 +2708,17 @@ Eigen::VectorXd RoboticTask::calculate_kfs_payload_compensation(
         return Eigen::VectorXd::Zero(6);
     }
 
+    //**
+    // TODO: 从配置中读取负载质量
+    //  检索五：KFS质量
+    //*/
+    double payload_mass = 0.5; // 假设负载质量为0.5kg
+
+    //**
+    // TODO: KFS坐标偏移
+    // 检索六：KFS坐标偏移 
+    //*/
+    Eigen::Vector3d payload_com_in_ee = Eigen::Vector3d(0.0, 0.0, -0.175);
     try {
         return kdl_dynamics_->calculatePayloadGravityCompensation(
             joint_positions,
