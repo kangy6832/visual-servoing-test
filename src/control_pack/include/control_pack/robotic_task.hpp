@@ -117,6 +117,8 @@ namespace robotic_task {
             std::atomic<bool> cancle_current_task{false};
             // 当前状态（原子变量，使用ArmTaskState枚举）
             std::atomic<int> current_state{ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE}; // 当前状态
+            
+            
             // 相机到link0的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
             // 相机到link0的坐标变换监听器
@@ -127,7 +129,13 @@ namespace robotic_task {
             std::shared_ptr<tf2_ros::TransformListener> link5_point_tf_lisenter_;
             // 相机到link0的坐标变换数据
             geometry_msgs::msg::TransformStamped camera_link0_tf;
-            // link5到点的坐标变换数据
+
+
+            /**
+             * link5到点的坐标变换数据
+             * 
+             * 使用point表示吸盘表面
+             */ 
             geometry_msgs::msg::TransformStamped link5_point_tf;
             // link4到link5的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
@@ -135,6 +143,8 @@ namespace robotic_task {
             std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
             // 通用坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+            
 
             // 目标物体坐标（相机为原点）
             Eigen::Vector3d target_object_position;
