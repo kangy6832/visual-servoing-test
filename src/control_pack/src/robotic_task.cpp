@@ -87,8 +87,10 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     // 初始化坐标框架变换的TF2缓冲区和监听器
     camera_link0_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     camera_link0_tf_lisenter_ = std::make_shared<tf2_ros::TransformListener>(*camera_link0_tf_buffer);
-    link5_point_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
-    link5_point_tf_lisenter_ = std::make_shared<tf2_ros::TransformListener>(*link5_point_tf_buffer);
+    camera_link6_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+    camera_link6_tf_lisenter_ = std::make_shared<tf2_ros::TransformListener>(*camera_link6_tf_buffer);
+
+
     
     // 初始化运动规划和场景管理的MoveIt接口
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
@@ -240,14 +242,14 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
 
     // 验证相机到base_link的变换是否可用
     try{
-        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
+        camera_link6_tf = camera_link6_tf_buffer->lookupTransform("link6", "camera_link", tf2::TimePointZero);
     } catch (const tf2::TransformException& ex){
         RCLCPP_WARN(node->get_logger(), "无法获取相机到基座的变换: %s", ex.what());
         return rclcpp_action::GoalResponse::REJECT;
     }
 
-    // 将目标位姿从相机坐标系转换到base_link坐标系
-    tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
+    // 将目标位姿从相机坐标系转换到link6坐标系
+    tf2::doTransform(goal->target_pose, task_target_pos, camera_link6_tf);
     RCLCPP_INFO(node->get_logger(), "原始目标位姿: Pos(%lf, %lf, %lf), Ori(%lf, %lf, %lf, %lf)",
                 goal->target_pose.position.x, goal->target_pose.position.y, 
                 goal->target_pose.position.z, goal->target_pose.orientation.x, 
@@ -262,6 +264,8 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
     task_target_pos.orientation.y = q.y();
     task_target_pos.orientation.z = q.z();
     task_target_pos.orientation.w = q.w();
+
+    target_object_position << task_target_pos.position.x, task_target_pos.position.y, task_target_pos.position.z;
 
     current_task_type = goal->action_type; // 设置当前任务类型
 

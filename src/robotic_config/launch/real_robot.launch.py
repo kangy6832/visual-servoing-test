@@ -148,6 +148,8 @@ def generate_launch_description():
             }]
         )
     
+    
+    
     # 创建静态坐标变换发布节点
     # 发布相机到机器人关节1（link1）的固定坐标变换
     # 此变换对于视觉伺服至关重要，确保视觉坐标系与机器人坐标系对齐
@@ -160,7 +162,7 @@ def generate_launch_description():
         arguments=[
             '0.04023', '-0.20514', '0.26134',          # 位置：x, y, z (米)
             '1.570796', '-1.570796', '1.570796',       # 旋转：roll, pitch, yaw (弧度)
-            'link5', 'camera_link'                      # 源坐标系 -> 目标坐标系
+            'link6', 'camera_link'                      # 源坐标系 -> 目标坐标系（link6是末端执行器）
         ]
     )
 
@@ -201,15 +203,15 @@ def generate_launch_description():
     # 组件按依赖关系顺序排列，确保系统正确初始化：
     # 1. 静态坐标变换（为其他组件提供正确的坐标系）
     # 2. ROS控制系统（管理控制接口，必须先启动）
-    # 3. 机器人驱动（控制真实硬件）
-    # 4. 机器人描述（建立机器人模型）
-    # 5. 运动规划组（基于模型进行规划，依赖控制系统）
+    # 3. 机器人描述（建立机器人模型）
+    # 4. 运动规划组（基于模型进行规划，依赖控制系统）
+    # 5. 机器人驱动（控制真实硬件，在控制系统之后启动）
     # 6. 可视化界面（监控系统状态）
     return LaunchDescription([
         static_tf,                     # 静态坐标变换发布器
         start_ros_control,             # ROS2控制系统（必须先启动）
-        joint_driver,                  # 机器人驱动节点
         robot_description_launch_py,   # 机器人描述
         move_group,                    # MoveIt运动规划组
+        joint_driver,                  # 机器人驱动节点（在控制系统后启动）
         rviz_show                      # RViz可视化
     ])

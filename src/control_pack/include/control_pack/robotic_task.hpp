@@ -123,22 +123,18 @@ namespace robotic_task {
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
             // 相机到link0的坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_lisenter_;
-            // link5到点的坐标变换缓冲区
-            std::unique_ptr<tf2_ros::Buffer> link5_point_tf_buffer;
-            // link5到点的坐标变换监听器
-            std::shared_ptr<tf2_ros::TransformListener> link5_point_tf_lisenter_;
-            // 相机到link0的坐标变换数据
-            geometry_msgs::msg::TransformStamped camera_link0_tf;
+            
+            // 相机到link6的坐标变换缓冲区
+            std::unique_ptr<tf2_ros::Buffer> camera_link6_tf_buffer;
 
+            // 相机到link6的坐标变换监听器
+            std::shared_ptr<tf2_ros::TransformListener> camera_link6_tf_lisenter_;
 
-            /**
-             * link5到点的坐标变换数据
-             * 
-             * 使用point表示吸盘表面
-             */ 
-            geometry_msgs::msg::TransformStamped link5_point_tf;
-            // link4到link5的坐标变换缓冲区
-            std::unique_ptr<tf2_ros::Buffer> link4_link5_tf_buffer;
+            // 相机到link6的坐标变换数据
+            geometry_msgs::msg::TransformStamped camera_link6_tf;
+
+            // link4到link6的坐标变换缓冲区
+            std::unique_ptr<tf2_ros::Buffer> link4_link6_tf_buffer;
             // 通用坐标变换缓冲区
             std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
             // 通用坐标变换监听器
@@ -175,9 +171,6 @@ namespace robotic_task {
             void handle_accepted(
                 const std::shared_ptr<rclcpp_action::ServerGoalHandle<robot_interfaces::action::Catch>>& goal_handle
             );
-
-
-            
 
             int count ; // 用于循环重试的数量表示
             const int MAX_COUNT = 100; // 表示最大重试次数
