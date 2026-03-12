@@ -164,7 +164,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     try {
         kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
         std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
-        if (kdl_dynamics_->initFromURDF(urdf_path, "base_link", "joint6")) {
+        if (kdl_dynamics_->initFromURDF(urdf_path, "world", "joint6")) {
             RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
         } else {
             RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");

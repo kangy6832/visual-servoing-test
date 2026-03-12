@@ -66,7 +66,7 @@
     </joint>
 
 </ros2_control>
-    <!-- 添加虚拟链接作为根链接，解决KDL根链接惯性问题 -->
+  <!-- 虚拟根链接，解决KDL根链接惯量问题 -->
   <link name="world"/>
   <joint name="world_to_base" type="fixed">
     <parent link="world"/>
