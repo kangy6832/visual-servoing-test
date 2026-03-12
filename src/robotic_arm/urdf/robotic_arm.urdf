@@ -4,6 +4,7 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
   name="robotic_arm">
+
   <ros2_control name="arm_hw" type="system">
     <hardware>
     <!-- 自己编写控制器软件包的命名空间和类名 -->
@@ -65,6 +66,13 @@
     </joint>
 
 </ros2_control>
+    <!-- 添加虚拟链接作为根链接，解决KDL根链接惯性问题 -->
+  <link name="world"/>
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
   <link
     name="base_link">
     <inertial>

@@ -93,6 +93,12 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
 
     
     // 初始化运动规划和场景管理的MoveIt接口
+    // 加载运动学配置参数
+    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver", "kdl_kinematics_plugin/KDLKinematicsPlugin");
+    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_search_resolution", 0.005);
+    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_timeout", 0.005);
+    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_attempts", 10);
+    
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
     psi = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
@@ -158,7 +164,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     try {
         kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
         std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
-        if (kdl_dynamics_->initFromURDF(urdf_path, "joint1", "joint6")) {
+        if (kdl_dynamics_->initFromURDF(urdf_path, "base_link", "joint6")) {
             RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
         } else {
             RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");
