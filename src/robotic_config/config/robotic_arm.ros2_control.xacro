@@ -6,10 +6,7 @@
 
         <!-- 2.定义在ros2_control 控制器 -->
         <ros2_control name="${name}" type="system">
-            <hardware>  <!-- 仿真用模拟硬件 -->
-                <!-- By default, set up controllers for simulation. This won't work on real hardware -->
-                <plugin>mock_components/GenericSystem</plugin>
-            </hardware>  
+            <!-- NOTE: Real hardware is defined in the main URDF (arm_hw). Do not add a mock system here. -->
 
         <!-- 3. 定义 6 个关节的控制接口 -->
             <joint name="joint1">

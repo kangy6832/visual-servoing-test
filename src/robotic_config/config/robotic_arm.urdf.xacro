@@ -5,10 +5,6 @@
     <!-- Import robotic_arm urdf file -->
     <xacro:include filename="$(find robotic_arm)/urdf/robotic_arm.urdf" />
 
-    <!-- Import control_xacro -->
-    <xacro:include filename="robotic_arm.ros2_control.xacro" />
-
-
-    <xacro:robotic_arm_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+    <!-- ros2_control is defined in the main URDF (arm_hw). Do not add a second system here. -->
 
 </robot>

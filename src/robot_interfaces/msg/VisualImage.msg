@@ -1,4 +1,4 @@
 geometry_msgs/Pose target_pose
 float32 confidence
 string object_class
-time stamp
+builtin_interfaces/Time stamp

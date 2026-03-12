@@ -162,7 +162,7 @@ def generate_launch_description():
         arguments=[
             '0.04023', '-0.20514', '0.26134',          # 位置：x, y, z (米)
             '1.570796', '-1.570796', '1.570796',       # 旋转：roll, pitch, yaw (弧度)
-            'link6', 'camera_link'                      # 源坐标系 -> 目标坐标系（link6是末端执行器）
+            'link5', 'camera_link'                      # 源坐标系 -> 目标坐标系（link6是末端执行器）
         ]
     )
 
