@@ -17,6 +17,7 @@
 #include <tf2_ros/transform_listener.hpp> 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp> 
 #include <geometry_msgs/msg/pose.hpp> 
+#include <sensor_msgs/msg/joint_state.hpp> 
 #include <robot_interfaces/msg/robot.hpp> 
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h> 
@@ -107,8 +108,8 @@ namespace robotic_task {
             // 机械臂任务运行标志（原子变量，线程安全）
             std::atomic<bool> is_running_arm_task{false};
 
-            // 当前任务类型（原子变量：0=移动, 1=抓取, 2=放置）
-            std::atomic<bool> current_task_type{0}; // 任务类型
+            // 当前任务类型（原子变量：0=无任务, 1=移动, 2=抓取, 3=放置）
+            std::atomic<int> current_task_type{0}; // 任务类型
             
             // 当前KFS编号（运动反馈系统编号）
             std::atomic<int> current_kfs_num{0};
@@ -501,7 +502,7 @@ namespace robotic_task {
             void updateDynamicsParams(const DynamicsControlParams& params);
 
             // 实现关节位置的实时更新
-            rclcpp::Subscription<robot_interfaces::msg::Robot>::SharedPtr joint_state_subscriber_;
+            rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscriber_;
 
             // 关节速度发布器，用于向硬件驱动节点发送速度命令
             rclcpp::Publisher<robot_interfaces::msg::Robot>::SharedPtr joint_velocity_publisher_;
@@ -514,7 +515,7 @@ namespace robotic_task {
             * 
             * @param msg 关节状态消息的共享指针，包含各关节的当前角度
             */
-            void jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg);
+            void jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg);
 
 
             

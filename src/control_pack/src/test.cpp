@@ -12,7 +12,7 @@ public:
     {
         RCLCPP_INFO(this->get_logger(), "ActionTestNode 启动，准备连接 Action Server...");
 
-        client_ = rclcpp_action::create_client<Catch>(this, "robotic_task");
+        client_ = rclcpp_action::create_client<Catch>(this, "robotic_task_");
 
         timer_ = this->create_wall_timer(
             std::chrono::seconds(10),
@@ -34,7 +34,7 @@ private:
         if (goal_sent_) return;
         goal_sent_ = true;
 
-        if (!client_->wait_for_action_server(std::chrono::seconds(2))) {
+        if (!client_->wait_for_action_server(std::chrono::seconds(5))) {
             RCLCPP_ERROR(this->get_logger(), "Action Server 未启动，退出。");
             rclcpp::shutdown();
             return;
@@ -45,28 +45,23 @@ private:
         auto goal_msg = Catch::Goal();
 
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
+        // 使用一个更容易到达的位置 - 机器人前方
+        goal_msg.target_pose.position.x = 0.3;     // 前方30cm
+        goal_msg.target_pose.position.y = 0.0;     // 正中间
+        goal_msg.target_pose.position.z = 0.3;     // 高度30cm
 
-
-        //模拟的抓取位置姿
-            // 在 rviz2 中的显示为z轴方向
-        goal_msg.target_pose.position.x = 0.0;//0.664748;
-            // 在 rviz2 中的显示为y轴方向
-        goal_msg.target_pose.position.y = -0.1;//-0.001824;
-            // 在 rviz2 中的显示为x轴方向
-        goal_msg.target_pose.position.z = 0.5;//0.256471;
-
-        goal_msg.target_pose.orientation.w = 1.0; // 0.004481;  // 单位四元数
-        goal_msg.target_pose.orientation.x = 0.0; // 0.708322;
-        goal_msg.target_pose.orientation.y = 0.0; // -0.004257;
-        goal_msg.target_pose.orientation.z = 0.0; // -0.705862;
+        goal_msg.target_pose.orientation.w = 1.0;   // 朝下
+        goal_msg.target_pose.orientation.x = 0.0;
+        goal_msg.target_pose.orientation.y = 0.0;
+        goal_msg.target_pose.orientation.z = 0.0;
 
         
 
         // action 类型为 “移动”
-        // goal_msg.action_type =  1;
+        goal_msg.action_type =  1;  // 先测试简单的移动任务
 
         // action 类型为 “抓取”
-        goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
+        // goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
         
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
 

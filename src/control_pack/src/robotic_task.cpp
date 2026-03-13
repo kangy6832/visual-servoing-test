@@ -104,7 +104,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
 
     // 创建实时关节位置监控的关节状态订阅器
-    joint_state_subscriber_ = node->create_subscription<robot_interfaces::msg::Robot>(
+    joint_state_subscriber_ = node->create_subscription<sensor_msgs::msg::JointState>(
         "joint_states", 10,
         std::bind(&RoboticTask::jointStateCallback, this, std::placeholders::_1)
     );
@@ -274,6 +274,13 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
     target_object_position << task_target_pos.position.x, task_target_pos.position.y, task_target_pos.position.z;
 
     current_task_type = goal->action_type; // 设置当前任务类型
+    
+    // 通知任务线程有新任务
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        has_new_task_ = true;
+    }
+    task_cv_.notify_one();
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -300,6 +307,9 @@ rclcpp_action::CancelResponse RoboticTask::cancel_goal(
         std::lock_guard<std::mutex> lock(task_mutex_);
         is_running_arm_task = false;
     }
+    
+    // 通知任务线程停止等待
+    task_cv_.notify_one();
 
     // 清理碰撞对象和气泵
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
@@ -405,6 +415,20 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
     }
 
     do{
+        // 等待新任务到达
+        std::unique_lock<std::mutex> lock(task_mutex_);
+        task_cv_.wait(lock, [this] { return has_new_task_ || cancle_current_task.load(); });
+        
+        if (cancle_current_task.load()) {
+            RCLCPP_INFO(node->get_logger(), "任务被取消，重置状态");
+            has_new_task_ = false;
+            current_task_type = 0;
+            continue;
+        }
+        
+        has_new_task_ = false;
+        lock.unlock();
+        
         move_group_interface->setStartStateToCurrentState();
         
         // 根据任务类型执行适当的任务
@@ -1064,11 +1088,11 @@ Eigen::VectorXd RoboticTask::get_joint_position() const {
  * 
  * @param msg 关节状态消息的共享指针
  */
-void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedPtr msg) {
+void RoboticTask::jointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg) {
     // 从消息更新关节位置
-    if (msg->joints.size() >= 6) {
-        for (size_t i = 0; i < 6 && i < msg->joints.size(); ++i) {
-            joint_position(i) = msg->joints[i].rad;
+    if (msg->position.size() >= 6) {
+        for (size_t i = 0; i < 6 && i < msg->position.size(); ++i) {
+            joint_position[i] = msg->position[i];
         }
     }
 }
@@ -1091,16 +1115,13 @@ void RoboticTask::jointStateCallback(const robot_interfaces::msg::Robot::SharedP
 bool RoboticTask::execute_move_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行移动任务");
     
+    // 移动任务：直接移动到目标位置
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
     if(!handle_move_to_ready_catch_point()) return false;
     
-    transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_CATCH_POINT);
-    if(!handle_move_to_catch_point()) return false;
-    
+    // 移动任务完成，不需要抓取和释放
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_IDLE);
     return handle_idle_state();
-
-    return true;
 }
 
 
@@ -1370,14 +1391,30 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
         task_target_pos, 0.1, grasp_pose, static_cast<int>(ApproachMode::AUTO)
     );
     
+    // 打印当前机器人状态
+    auto current_joint_values = move_group_interface->getCurrentJointValues();
+    auto current_pose = move_group_interface->getCurrentPose();
+    RCLCPP_INFO(node->get_logger(), "当前关节位置: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", 
+                current_joint_values[0], current_joint_values[1], current_joint_values[2],
+                current_joint_values[3], current_joint_values[4], current_joint_values[5]);
+    RCLCPP_INFO(node->get_logger(), "当前末端位姿: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
+                current_pose.pose.position.x, current_pose.pose.position.y, current_pose.pose.position.z,
+                current_pose.pose.orientation.x, current_pose.pose.orientation.y, 
+                current_pose.pose.orientation.z, current_pose.pose.orientation.w);
+    
     move_group_interface->setPoseTarget(prepare_pose);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     
     count = 0 ;
     auto success = move_group_interface->plan(plan);
+    RCLCPP_INFO(node->get_logger(), "首次规划结果: %s", 
+                success == moveit::core::MoveItErrorCode::SUCCESS ? "成功" : "失败");
+    
     do{
         success = move_group_interface->plan(plan);
         count ++;
+        RCLCPP_INFO(node->get_logger(), "规划尝试 %d: %s", count,
+                    success == moveit::core::MoveItErrorCode::SUCCESS ? "成功" : "失败");
     } while (success != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
     
     const double dt = 1.0 / dynamics_params_.control_frequency;
