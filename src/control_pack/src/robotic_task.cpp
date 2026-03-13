@@ -96,7 +96,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     // 加载运动学配置参数
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver", "kdl_kinematics_plugin/KDLKinematicsPlugin");
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_search_resolution", 0.005);
-    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_timeout", 0.005);
+    node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_timeout", 0.05);
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_attempts", 10);
     
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
@@ -159,6 +159,10 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     move_group_interface->setPlanningTime(10.0);
     move_group_interface->setMaxVelocityScalingFactor(VELOCITY_SCALING);            // 设置速度缩放因子
     move_group_interface->setMaxAccelerationScalingFactor(ACCELERATION_SCALING);    // 设置加速度缩放因子
+    move_group_interface->setPoseReferenceFrame("base_link");
+    move_group_interface->setEndEffectorLink("link6");
+    move_group_interface->setGoalPositionTolerance(0.01);
+    move_group_interface->setGoalOrientationTolerance(0.05);
 
     // 初始化KDL动力学计算类
     try {
@@ -1390,6 +1394,10 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
         task_target_pos, 0.1, grasp_pose, static_cast<int>(ApproachMode::AUTO)
     );
+    RCLCPP_INFO(node->get_logger(), "准备抓取目标位姿: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
+                prepare_pose.position.x, prepare_pose.position.y, prepare_pose.position.z,
+                prepare_pose.orientation.x, prepare_pose.orientation.y,
+                prepare_pose.orientation.z, prepare_pose.orientation.w);
     
     // 打印当前机器人状态
     auto current_joint_values = move_group_interface->getCurrentJointValues();
@@ -1402,6 +1410,7 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
                 current_pose.pose.orientation.x, current_pose.pose.orientation.y, 
                 current_pose.pose.orientation.z, current_pose.pose.orientation.w);
     
+    move_group_interface->setStartStateToCurrentState();
     move_group_interface->setPoseTarget(prepare_pose);
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     
@@ -1416,6 +1425,17 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
         RCLCPP_INFO(node->get_logger(), "规划尝试 %d: %s", count,
                     success == moveit::core::MoveItErrorCode::SUCCESS ? "成功" : "失败");
     } while (success != moveit::core::MoveItErrorCode::SUCCESS && count < MAX_COUNT);
+    if (success != moveit::core::MoveItErrorCode::SUCCESS) {
+        RCLCPP_ERROR(node->get_logger(), "预备抓取位置规划失败，放弃执行");
+        move_group_interface->clearPoseTargets();
+        return false;
+    }
+    if (plan.trajectory_.joint_trajectory.points.empty()) {
+        RCLCPP_ERROR(node->get_logger(), "规划轨迹为空，放弃执行");
+        move_group_interface->clearPoseTargets();
+        return false;
+    }
+    move_group_interface->clearPoseTargets();
     
     const double dt = 1.0 / dynamics_params_.control_frequency;
     Eigen::VectorXd current_joint_velocities = Eigen::VectorXd::Zero(6);
@@ -2782,8 +2802,6 @@ void RoboticTask::updateDynamicsParams(const DynamicsControlParams& params) {
     dynamics_params_ = params;
     RCLCPP_INFO(node->get_logger(), "动力学控制参数已更新");
 }
-
-
 
 
 
