@@ -78,7 +78,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     // 初始化用于驱动节点通信的异步参数客户端
     param_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
     // 创建机器人任务管理的动作服务器
-    arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(node, "robotic_task", 
+    arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(node, "robotic_task_", 
         std::bind(&RoboticTask::handle_goal, this, std::placeholders::_1, std::placeholders::_2), 
         std::bind(&RoboticTask::cancel_goal, this, std::placeholders::_1), 
         std::bind(&RoboticTask::handle_accepted, this, std::placeholders::_1)
@@ -164,7 +164,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     try {
         kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
         std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
-        if (kdl_dynamics_->initFromURDF(urdf_path, "world", "joint6")) {
+        if (kdl_dynamics_->initFromURDF(urdf_path, "world", "link6")) {
             RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
         } else {
             RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");
@@ -248,14 +248,14 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
 
     // 验证相机到base_link的变换是否可用
     try{
-        camera_link6_tf = camera_link6_tf_buffer->lookupTransform("link6", "camera_link", tf2::TimePointZero);
+        camera_link0_tf = camera_link0_tf_buffer->lookupTransform("base_link", "camera_link", tf2::TimePointZero);
     } catch (const tf2::TransformException& ex){
         RCLCPP_WARN(node->get_logger(), "无法获取相机到基座的变换: %s", ex.what());
         return rclcpp_action::GoalResponse::REJECT;
     }
 
-    // 将目标位姿从相机坐标系转换到link6坐标系
-    tf2::doTransform(goal->target_pose, task_target_pos, camera_link6_tf);
+    // 将目标位姿从相机坐标系转换到base_link坐标系
+    tf2::doTransform(goal->target_pose, task_target_pos, camera_link0_tf);
     RCLCPP_INFO(node->get_logger(), "原始目标位姿: Pos(%lf, %lf, %lf), Ori(%lf, %lf, %lf, %lf)",
                 goal->target_pose.position.x, goal->target_pose.position.y, 
                 goal->target_pose.position.z, goal->target_pose.orientation.x, 

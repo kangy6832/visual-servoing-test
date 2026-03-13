@@ -160,8 +160,8 @@ def generate_launch_description():
         package='tf2_ros',                              # tf2坐标变换包
         executable='static_transform_publisher',        # 静态变换发布器
         arguments=[
-            '0.04023', '-0.20514', '0.26134',          # 位置：x, y, z (米)
-            '1.570796', '-1.570796', '1.570796',       # 旋转：roll, pitch, yaw (弧度)
+            '0.0', '0.0', '0.0',          # 位置：x, y, z (米)
+            '0.0', '0.0', '0.0',       # 旋转：roll, pitch, yaw (弧度)
             'link5', 'camera_link'                      # 源坐标系 -> 目标坐标系（link6是末端执行器）
         ]
     )

@@ -55,6 +55,10 @@ add_executable(robotic_task_node
   src/trajectory_executor.cpp
 )
 
+add_executable(arm_test
+  src/test.cpp
+)
+
 target_include_directories(robotic_task_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -85,8 +89,17 @@ ament_target_dependencies(robotic_task_node
   robot_interfaces
 )
 
+ament_target_dependencies(arm_test
+  rclcpp
+  rclcpp_action
+  std_msgs
+  trajectory_msgs
+  robot_interfaces
+  geometry_msgs
+)
+
 # Install the executable
-install(TARGETS robotic_task_node
+install(TARGETS robotic_task_node arm_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

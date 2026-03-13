@@ -123,6 +123,8 @@ namespace robotic_task {
             std::unique_ptr<tf2_ros::Buffer> camera_link0_tf_buffer;
             // 相机到link0的坐标变换监听器
             std::shared_ptr<tf2_ros::TransformListener> camera_link0_tf_lisenter_;
+            // 相机到link0的坐标变换数据
+            geometry_msgs::msg::TransformStamped camera_link0_tf;
             
             // 相机到link6的坐标变换缓冲区
             std::unique_ptr<tf2_ros::Buffer> camera_link6_tf_buffer;
