@@ -662,74 +662,34 @@ geometry_msgs::msg::Pose RoboticTask::calculate_target_pose(
         "机器人远离方向向量 = (%f, %f, %f)", away_from_robot.x(), away_from_robot.y(), away_from_robot.z()
     );
 
-    // 计算最佳吸杯对齐的末端执行器方向
+    // 简化的末端执行器方向计算
     Eigen::Vector3d eef_x_axis;
     Eigen::Vector3d eef_y_axis;
     Eigen::Vector3d eef_z_axis;
 
-    // 计算吸杯方向（垂直于表面法线，指向远离机器人的方向）
-    Eigen::Vector3d suction_dir = away_from_robot - away_from_robot.dot(surface_normal) * surface_normal;
-    suction_dir.normalize();
-
-    RCLCPP_INFO(
-        node->get_logger(), 
-        "吸盘方向计算 = (%f, %f, %f)", suction_dir.x(), suction_dir.y(), suction_dir.z()
-    );
-
-    // 验证吸杯方向对齐
-    double normal_alignment = std::abs(suction_dir.dot(surface_normal));
-    RCLCPP_INFO(node->get_logger(), "吸盘法线对齐度（应为0） = %f", normal_alignment);
-    RCLCPP_INFO(node->get_logger(), "吸盘方向z分量: %f （应接近零）", suction_dir.z());
-
-    double away_alignment = suction_dir.dot(away_from_robot);
-    RCLCPP_INFO(node->get_logger(), "吸盘远离方向对齐度（应为0） = %f", away_alignment);
-
-    // 如果主要计算失败，使用备用计算
-    if(normal_alignment > 0.1 || away_alignment < 0.9 || std::abs(suction_dir.z()) > 0.1){
-        RCLCPP_ERROR(node->get_logger(), "吸盘方向计算错误");
-        RCLCPP_WARN(node->get_logger(), "使用备用方案计算吸盘方向");
-
-        // 备用方案：使用与全局Z轴的叉积
-        Eigen::Vector3d temp = surface_normal.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
-        if(temp.norm() < 1e-6){
-            temp = surface_normal.cross(Eigen::Vector3d(1.0, 0.0, 0.0));
-        }
-
-        temp.normalize();
-
-        if(temp.dot(away_from_robot) < 0.0){
-            suction_dir = -temp;
-        } else {
-            suction_dir = temp;
-        }
-    }
-
-    // 设置末端执行器X轴为吸杯方向
-    eef_x_axis = suction_dir;
-    RCLCPP_INFO(node->get_logger(), "最终吸盘方向 = (%f, %f, %f)", eef_x_axis.x(), eef_x_axis.y(), eef_x_axis.z());
-
-    // 使用与全局轴的叉积计算末端执行器Y轴
-    Eigen::Vector3d global_x(1.0, 0.0, 0.0);
-    Eigen::Vector3d global_y(0.0, 1.0, 0.0);
-    Eigen::Vector3d global_z(0.0, 0.0, 1.0);
-
-    if(std::abs(eef_x_axis.dot(global_x)) > 0.9){
-        eef_y_axis = global_y.cross(eef_x_axis);
-    } else {
-        eef_y_axis = global_x.cross(eef_x_axis);
-    }
-
-    // 如果叉积结果为零向量，则使用备用方案
-    if(eef_y_axis.norm() < 1e-6){
-        eef_y_axis = global_z.cross(eef_x_axis);
-    }
-    eef_y_axis.normalize();
-
-    RCLCPP_INFO(node->get_logger(), "末端Y轴方向 = (%f, %f, %f)", eef_y_axis.x(), eef_y_axis.y(), eef_y_axis.z());
+    // 简化方案：使用固定的、保守的末端执行器方向
+    // X轴指向物体（简化吸盘方向）
+    Eigen::Vector3d to_object = object_center - Eigen::Vector3d(0.0, 0.0, 0.0);
+    to_object.z() = 0; // 投影到XY平面
+    to_object.normalize();
     
-    // 计算Z轴作为X和Y轴的叉积
+    if(to_object.norm() < 1e-6) {
+        to_object = Eigen::Vector3d(1.0, 0.0, 0.0);
+    }
+    
+    eef_x_axis = to_object;
+    
+    // Y轴保持垂直向下（简化抓取姿态）
+    eef_y_axis = Eigen::Vector3d(0.0, 0.0, -1.0);
+    
+    // Z轴由X和Y轴的叉积确定
     eef_z_axis = eef_x_axis.cross(eef_y_axis);
-    RCLCPP_INFO(node->get_logger(), "末端Z轴方向 = (%f, %f, %f)", eef_z_axis.x(), eef_z_axis.y(), eef_z_axis.z());
+    eef_z_axis.normalize();
+    
+    RCLCPP_INFO(node->get_logger(), "简化末端方向计算:");
+    RCLCPP_INFO(node->get_logger(), "X轴(吸盘方向) = (%f, %f, %f)", eef_x_axis.x(), eef_x_axis.y(), eef_x_axis.z());
+    RCLCPP_INFO(node->get_logger(), "Y轴(垂直向下) = (%f, %f, %f)", eef_y_axis.x(), eef_y_axis.y(), eef_y_axis.z());
+    RCLCPP_INFO(node->get_logger(), "Z轴 = (%f, %f, %f)", eef_z_axis.x(), eef_z_axis.y(), eef_z_axis.z());
     
     // 从计算的轴构建旋转矩阵
     Eigen::Matrix3d R_eef;
@@ -1484,19 +1444,28 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     // 5. 检查规划结果和执行状态
     // 6. 处理可能的规划失败和重试逻辑
     
-    // 当前占位符实现:
+    // 分步移动策略：使用非常保守的目标姿态
     geometry_msgs::msg::Pose grasp_pose;
-    geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
-        task_target_pos, 0.1, grasp_pose, static_cast<int>(ApproachMode::AUTO)
-    );
-    RCLCPP_INFO(node->get_logger(), "准备抓取目标位姿: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
+    geometry_msgs::msg::Pose prepare_pose;
+    
+    // 使用当前姿态的小幅度修改作为目标
+    auto current_pose = move_group_interface->getCurrentPose();
+    
+    // 只移动位置，保持当前姿态
+    prepare_pose.position.x = current_pose.pose.position.x + 0.05;  // 只向前移动5cm
+    prepare_pose.position.y = current_pose.pose.position.y;
+    prepare_pose.position.z = current_pose.pose.position.z;
+    
+    // 保持当前姿态不变
+    prepare_pose.orientation = current_pose.pose.orientation;
+    
+    RCLCPP_INFO(node->get_logger(), "超保守策略 - 小幅移动目标: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
                 prepare_pose.position.x, prepare_pose.position.y, prepare_pose.position.z,
                 prepare_pose.orientation.x, prepare_pose.orientation.y,
                 prepare_pose.orientation.z, prepare_pose.orientation.w);
     
     // 打印当前机器人状态
     auto current_joint_values = move_group_interface->getCurrentJointValues();
-    auto current_pose = move_group_interface->getCurrentPose();
     RCLCPP_INFO(node->get_logger(), "当前关节位置: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", 
                 current_joint_values[0], current_joint_values[1], current_joint_values[2],
                 current_joint_values[3], current_joint_values[4], current_joint_values[5]);
