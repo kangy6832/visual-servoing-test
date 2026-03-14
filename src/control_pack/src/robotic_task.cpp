@@ -72,17 +72,24 @@ using namespace robotic_task;
  * @param node 用于通信的ROS2节点共享指针
  */
 RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
+
+    RCLCPP_INFO(node->get_logger(), "RoboticTask初始化开始");
+
     // 初始化关节位置为6维零向量（假设6关节机器人）
     joint_position = Eigen::VectorXd::Zero(6);
-    
+    RCLCPP_INFO(node->get_logger(), "关节位置初始化完成，维度: %ld", joint_position.size());
+
     // 初始化用于驱动节点通信的异步参数客户端
     param_client = std::make_shared<rclcpp::AsyncParametersClient>(node, "driver_node");
+    RCLCPP_INFO(node->get_logger(), "异步参数客户端初始化完成");
+
     // 创建机器人任务管理的动作服务器
-    arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(node, "robotic_task_", 
-        std::bind(&RoboticTask::handle_goal, this, std::placeholders::_1, std::placeholders::_2), 
-        std::bind(&RoboticTask::cancel_goal, this, std::placeholders::_1), 
+    arm_handle_server = rclcpp_action::create_server<robot_interfaces::action::Catch>(node, "robotic_task_",
+        std::bind(&RoboticTask::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
+        std::bind(&RoboticTask::cancel_goal, this, std::placeholders::_1),
         std::bind(&RoboticTask::handle_accepted, this, std::placeholders::_1)
     );
+    RCLCPP_INFO(node->get_logger(), "动作服务器初始化完成");
 
     // 初始化坐标框架变换的TF2缓冲区和监听器
     camera_link0_tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
@@ -98,10 +105,11 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_search_resolution", 0.005);
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_timeout", 0.05);
     node->declare_parameter("robot_description_kinematics.robotic_arm.kinematics_solver_attempts", 10);
-    
+
     move_group_interface = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node, "robotic_arm");
     psi = std::make_shared<moveit::planning_interface::PlanningSceneInterface>();
     mark_pub_ = node->create_publisher<visualization_msgs::msg::Marker>("debug_marker", 10);
+    RCLCPP_INFO(node->get_logger(), "MoveIt接口和规划场景初始化完成");
 
     // 创建实时关节位置监控的关节状态订阅器
     joint_state_subscriber_ = node->create_subscription<sensor_msgs::msg::JointState>(
@@ -163,6 +171,8 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     move_group_interface->setEndEffectorLink("link6");
     move_group_interface->setGoalPositionTolerance(0.01);
     move_group_interface->setGoalOrientationTolerance(0.05);
+    RCLCPP_INFO(node->get_logger(), "MoveIt规划参考系: %s", move_group_interface->getPlanningFrame().c_str());
+    RCLCPP_INFO(node->get_logger(), "MoveIt末端链接: %s", move_group_interface->getEndEffectorLink().c_str());
 
     // 初始化KDL动力学计算类
     try {
@@ -242,6 +252,7 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
     const rclcpp_action::GoalUUID& uuid, 
     std::shared_ptr<const robot_interfaces::action::Catch::Goal> goal
 ){
+    RCLCPP_INFO(node->get_logger(), "handle_goal");
     (void)uuid;
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
@@ -278,6 +289,7 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
     target_object_position << task_target_pos.position.x, task_target_pos.position.y, task_target_pos.position.z;
 
     current_task_type = goal->action_type; // 设置当前任务类型
+    RCLCPP_INFO(node->get_logger(), "接收到任务，类型: %d", current_task_type.load());
     
     // 通知任务线程有新任务
     {
@@ -418,21 +430,101 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
         psi->applyCollisionObject(collision_object);
     }
 
-    do{
-        // 等待新任务到达
-        std::unique_lock<std::mutex> lock(task_mutex_);
-        task_cv_.wait(lock, [this] { return has_new_task_ || cancle_current_task.load(); });
+    
+    move_group_interface->setStartStateToCurrentState();
+    move_group_interface->clearPathConstraints();
+    move_group_interface->clearPoseTargets();
+    // move_group_interface->setNamedTarget("start_pos_2");
+    Eigen::VectorXd idle_joints_start2(6);
+    idle_joints_start2 << 0.0, 0.349065850, 0.226892803, -0.593411946, 0.0, 0.0 ;
+    std::vector<double> idle_joitns_start2_vec(idle_joints_start2.data(), idle_joints_start2.data() + idle_joints_start2.size());
+    move_group_interface->setJointValueTarget(idle_joitns_start2_vec);
+    
+    success = (move_group_interface->plan(plan) == 
+                moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    count = 0;
+    while(!success && count < 10){
+        count ++;
+        RCLCPP_WARN(node->get_logger(), "起始位置规划失败，重试%d次", count);
+        success = (move_group_interface->plan(plan) == 
+                    moveit::planning_interface::MoveItErrorCode::SUCCESS);
+    }
+
+    if(!success){
+        RCLCPP_ERROR(node->get_logger(), "起始位置规划失败，放弃任务");
+        return;
+    } else {
+        RCLCPP_INFO(node->get_logger(), "起始位置规划成功");
+        auto execute_result = move_group_interface->execute(plan);
+
+        while(execute_result != moveit::planning_interface::MoveItErrorCode::SUCCESS){
+            RCLCPP_WARN(node->get_logger(), "起始位置执行失败，重试");
+            execute_result = move_group_interface->execute(plan);
+        }
+
+        if(execute_result == moveit::planning_interface::MoveItErrorCode::SUCCESS){
+            RCLCPP_INFO(node->get_logger(), "起始位置执行成功");
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+    RCLCPP_INFO(node->get_logger(), "机械臂任务处理线程启动完成，等待任务请求");
+
+    while (rclcpp::ok()) {
         
-        if (cancle_current_task.load()) {
-            RCLCPP_INFO(node->get_logger(), "任务被取消，重置状态");
-            has_new_task_ = false;
-            current_task_type = 0;
+        continue_flag = false;
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            is_running_arm_task = false;
+            RCLCPP_DEBUG(node->get_logger(), "任务循环开始，has_new_task_: %s", has_new_task_ ? "true" : "false");
+        }
+        std::unique_lock<std::mutex> lock(task_mutex_);
+        bool ok = task_cv_.wait_for(lock, 5s, [this](){return has_new_task_;});
+        has_new_task_ = false;
+        RCLCPP_DEBUG(node->get_logger(), "wait_for返回，ok: %s, has_new_task_: %s", ok ? "true" : "false", has_new_task_ ? "true" : "false");
+        lock.unlock();
+
+        if(!ok){
+            auto pos = move_group_interface->getCurrentPose();
+            RCLCPP_INFO(node->get_logger(), "当前机械臂位置: %f, %f, %f,,,Rot:%f, %f, %f, %f", 
+            pos.pose.position.x, pos.pose.position.y, pos.pose.position.z,
+            pos.pose.orientation.x, pos.pose.orientation.y, pos.pose.orientation.z, pos.pose.orientation.w);
             continue;
         }
-        
-        has_new_task_ = false;
-        lock.unlock();
-        
+    
+
+        RCLCPP_INFO(node->get_logger(), "接收到新的任务请求");
+
+        if (first_run)                                                                   // 第一次执行时，设置一次规划器参数
+        {
+            // 容差
+            move_group_interface->setGoalJointTolerance(0.01); // 关节容差 0.01 rad
+            move_group_interface->setGoalPositionTolerance(0.005); // 位置容差 5mm
+            move_group_interface->setGoalOrientationTolerance(0.01); // 姿态容差 1度
+            // 调用 setPlanningTime 方法设置规划器的最大规划时间为 5.0 秒
+            move_group_interface->setPlanningTime(10.0);
+
+            // 设置采样次数（最多尝试次数）
+            move_group_interface->setNumPlanningAttempts(20);
+
+            first_run = false;
+        }
+
+        if (!rclcpp::ok()) {
+            break;
+        }
+
+        // 直接处理任务，不再等待
         move_group_interface->setStartStateToCurrentState();
         
         // 根据任务类型执行适当的任务
@@ -472,7 +564,7 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
         // 为下一个任务重置任务状态
         reset_task_state();
         
-    } while(false); // 目前每个请求只执行一个任务
+    } ;
 
 
 
@@ -1145,6 +1237,9 @@ bool RoboticTask::execute_move_task() {
  */
 bool RoboticTask::execute_catch_task() {
     RCLCPP_INFO(node->get_logger(), "开始执行抓取任务");
+
+    add_kfs_collision(task_target_pos, "target_kfs", move_group_interface->getPlanningFrame());
+
     
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_READY_CATCH_POINT);
     if(!handle_move_to_ready_catch_point()) return false;
@@ -1536,6 +1631,8 @@ bool RoboticTask::handle_move_to_catch_point() {
     // 6. 添加接近速度控制
     
     // 当前占位符实现:
+    remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
+
     geometry_msgs::msg::Pose grasp_pose;
     geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
         task_target_pos, 0.05, grasp_pose, static_cast<int>(ApproachMode::POS)
@@ -1902,9 +1999,7 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
 bool RoboticTask::handle_catch_target() {
     RCLCPP_INFO(node->get_logger(), "处理抓取目标状态");
     update_feedback();
-    
-    // 为目标向规划场景添加碰撞对象
-    add_kfs_collision(task_target_pos, "target_kfs", move_group_interface->getPlanningFrame());
+
     
     // 等待稳定，确保机械臂已到达抓取位置
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -2802,7 +2897,6 @@ void RoboticTask::updateDynamicsParams(const DynamicsControlParams& params) {
     dynamics_params_ = params;
     RCLCPP_INFO(node->get_logger(), "动力学控制参数已更新");
 }
-
 
 
 

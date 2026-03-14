@@ -46,9 +46,9 @@ private:
 
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
         // 使用一个更容易到达的位置 - 机器人前方
-        goal_msg.target_pose.position.x = 0.3;     // 前方30cm
+        goal_msg.target_pose.position.x = 0.5;     // 前方30cm
         goal_msg.target_pose.position.y = 0.0;     // 正中间
-        goal_msg.target_pose.position.z = 0.3;     // 高度30cm
+        goal_msg.target_pose.position.z = 0.5;     // 高度30cm
 
         goal_msg.target_pose.orientation.w = 1.0;   // 朝下
         goal_msg.target_pose.orientation.x = 0.0;
@@ -58,10 +58,10 @@ private:
         
 
         // action 类型为 “移动”
-        goal_msg.action_type =  1;  // 先测试简单的移动任务
+        // goal_msg.action_type =  1;  // 先测试简单的移动任务
 
         // action 类型为 “抓取”
-        // goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
+        goal_msg.action_type =  2;      //捕获目标在这个坐标的物体
         
         auto send_goal_options = rclcpp_action::Client<Catch>::SendGoalOptions();
 
