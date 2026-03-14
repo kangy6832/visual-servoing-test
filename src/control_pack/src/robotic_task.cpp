@@ -1507,6 +1507,43 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     
     move_group_interface->setStartStateToCurrentState();
     move_group_interface->setPoseTarget(prepare_pose);
+    
+    // 检查目标姿态是否可达（关节限制检查）
+    auto joint_values = move_group_interface->getCurrentJointValues();
+    auto robot_state = move_group_interface->getCurrentState();
+    const moveit::core::JointModelGroup* joint_model_group = 
+        move_group_interface->getRobotModel()->getJointModelGroup("robotic_arm");
+    
+    // 尝试进行逆运动学求解来验证可达性
+    std::vector<double> solution_joints;
+    bool ik_found = robot_state->setFromIK(joint_model_group, prepare_pose, "link6");
+    
+    if (ik_found) {
+        robot_state->copyJointGroupPositions(joint_model_group, solution_joints);
+        RCLCPP_INFO(node->get_logger(), "IK求解成功，关节角度: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]", 
+                    solution_joints[0], solution_joints[1], solution_joints[2],
+                    solution_joints[3], solution_joints[4], solution_joints[5]);
+        
+        // 检查关节是否在限制范围内
+        const std::vector<std::string>& joint_names = joint_model_group->getJointModelNames();
+        for (size_t i = 0; i < joint_names.size(); ++i) {
+            const auto* joint_model = joint_model_group->getJointModel(joint_names[i]);
+            if (joint_model && joint_model->getType() == moveit::core::JointModel::REVOLUTE) {
+                const auto& bounds = joint_model->getVariableBounds();
+                if (!bounds.empty()) {
+                    double lower = bounds[0].min_position_;
+                    double upper = bounds[0].max_position_;
+                    double joint_value = solution_joints[i];
+                    RCLCPP_INFO(node->get_logger(), "关节%s: 值=%.3f, 限制=[%.3f, %.3f] %s", 
+                                joint_names[i].c_str(), joint_value, lower, upper,
+                                (joint_value >= lower && joint_value <= upper) ? "✓" : "✗ 超出限制!");
+                }
+            }
+        }
+    } else {
+        RCLCPP_ERROR(node->get_logger(), "IK求解失败 - 目标姿态不可达!");
+    }
+    
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     
     count = 0 ;
