@@ -30,7 +30,7 @@ SerialNode::SerialNode()
     exit_thread = false;
 
     // 先创建 publisher/subscriber，确保回调中 publish 时 publisher 已就绪
-    // joint_publisher = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
+    //joint_publisher_moveit = this->create_publisher<sensor_msgs::msg::JointState>("joint_states", 10);
     joint_publisher = this->create_publisher<robot_interfaces::msg::Robot>("myjoints_state", 10);
 
     joint_subscriber = this->create_subscription<robot_interfaces::msg::Robot>(
@@ -86,16 +86,17 @@ SerialNode::~SerialNode() {
 }
 
 void SerialNode::publishLegState(const Arm_t* arm_state) {
-    /*sensor_msgs::msg::JointState msg;
-    msg.header.stamp=this->now();
-    msg.name={"joint1","joint2","joint3","joint4","joint5","joint6"};       //发布joint状态
-    msg.position.resize(6);
-    msg.velocity.resize(6);
-    for(int i=0;i<6;i++)
-    {
-        msg.position[i]=arm_state->joints[i].rad;
-        msg.velocity[i]=arm_state->joints[i].omega;
-    }*/
+    // sensor_msgs::msg::JointState msg_;
+    // msg_.header.stamp=this->now();
+    // msg_.name={"joint1","joint2","joint3","joint4","joint5","joint6"};       //发布joint状态
+    // msg_.position.resize(6);
+    // msg_.velocity.resize(6);
+    // for(int i=0;i<6;i++)
+    // {
+    //     msg_.position[i]=arm_state->joints[i].rad;
+    //     msg_.velocity[i]=arm_state->joints[i].omega;
+    // }
+    // joint_publisher_moveit->publish(msg_);
     robot_interfaces::msg::Robot msg;
     for (int i = 0; i < 6; i++) {
         msg.joints[i].rad    = arm_state->joints[i].rad;
@@ -107,9 +108,14 @@ void SerialNode::publishLegState(const Arm_t* arm_state) {
 
     cur_pub_cnt++;
     if (cur_pub_cnt == publish_cnt) {
-        RCLCPP_INFO(this->get_logger(), "发布电机状态");
+        RCLCPP_INFO(this->get_logger(), "发布电机状态,%f",msg.joints[1].rad);
         cur_pub_cnt = 0;
+
     }
+
+    // for(int i = 0 ; i < 6 ; i++) {
+    //     RCLCPP_INFO(this->get_logger(), "关节%d: rad=%lf, omega=%lf, torque=%lf", i, msg.joints[i].rad, msg.joints[i].omega, msg.joints[i].torque);
+    // }
 }
 
 void SerialNode::legsSubscribCb(const robot_interfaces::msg::Robot& msg) {

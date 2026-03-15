@@ -164,6 +164,7 @@ private:
     
     /** @brief 关节状态发布器，将机器人状态发布到"myjoints_state"话题 */
     rclcpp::Publisher<robot_interfaces::msg::Robot>::SharedPtr joint_publisher;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_publisher_moveit;
     
     /** @brief 运动指令订阅器，订阅"myjoints_target"话题接收MoveIt生成的运动指令 */
     rclcpp::Subscription<robot_interfaces::msg::Robot>::SharedPtr joint_subscriber;

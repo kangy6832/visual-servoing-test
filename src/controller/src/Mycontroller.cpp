@@ -75,6 +75,19 @@
 // 自定义消息
 #include <robot_interfaces/msg/robot.hpp> // 自定义的机器人消息，包含关节数据
 
+
+
+
+
+#include "hardware_interface/system_interface.hpp"
+#include "pluginlib/class_list_macros.hpp"
+
+#include <hardware_interface/handle.hpp>
+#include <memory>
+#include <rclcpp/publisher.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/subscription.hpp>
+
 // 自定义命名空间，避免与其他库冲突
 namespace mycontroller {
 
@@ -244,6 +257,7 @@ namespace mycontroller {
                            state_positions_[0], state_positions_[1], state_positions_[2]);
                 log_counter = 0;
             }
+            rclcpp::spin_some(node_);
             return hardware_interface::return_type::OK;
         }
 
@@ -272,6 +286,8 @@ namespace mycontroller {
             }
             // 发布消息到主题，让其他节点（如驱动节点）接收
             publisher_->publish(msg);
+
+            rclcpp::spin_some(node_);
             return hardware_interface::return_type::OK;
         }
         
