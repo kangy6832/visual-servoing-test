@@ -469,8 +469,10 @@ namespace RobotKinematicsKDL {
              * @return true 加载成功
              */
              bool loadFromURDF (const std::string& urdf_path, 
-                                const std::string& base_link = "base_link", 
-                                const std::string& tip_link = "tool0");
+                                const std::string& base_link = "world", 
+                                const std::string& tip_link = "link6");
+
+            std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
 
             /**
              * @brief 手动构建机械臂链 

@@ -57,6 +57,7 @@
 #include <rclcpp/node.hpp> // ROS2 节点的基类
 #include <rclcpp/publisher.hpp> // 发布者，用于发布消息到主题
 #include <rclcpp/subscription.hpp> // 订阅者，用于订阅主题消息
+#include <rclcpp/logging.hpp> // 日志系统
 
 // 标准库
 #include <vector> // 向量容器
@@ -96,11 +97,13 @@ namespace mycontroller {
             for(auto &joint : info.joints){
                 // 添加关节名称，用于后续接口创建
                 joint_names_.push_back(joint.name);
-                // 初始化状态值：位置和速度（从硬件读取）
+                // 初始化状态值：位置、速度、力矩（从硬件读取）
+                // 注意：这里应该从实际硬件读取初始位置，而不是设为0
                 state_positions_.push_back(0.0);
                 state_velocities_.push_back(0.0);
                 state_efforts_.push_back(0.0);
                 // 初始化命令值：位置、速度、力矩（发送到硬件）
+                // 设置为初始位置，避免关节归零
                 command_positions_.push_back(0.0);
                 command_velocities_.push_back(0.0);
                 command_efforts_.push_back(0.0);
@@ -124,10 +127,13 @@ namespace mycontroller {
                     // 这里假设有 6 个关节，实际应使用 joint_names_.size()
                     for(int i = 0 ; i < 6 ; i++){
                         // 更新位置和速度状态
-                        state_positions_[i] = msg.joints[i].rad;
-                        state_velocities_[i] = msg.joints[i].omega;
-                        state_efforts_[i] = msg.joints[i].torque;
+                        state_positions_[i] = static_cast<double>(msg.joints[i].rad);
+                        state_velocities_[i] = static_cast<double>(msg.joints[i].omega);
+                        state_efforts_[i] = static_cast<double>(msg.joints[i].torque);
                     }
+                    // 添加调试日志
+                    RCLCPP_INFO(node_->get_logger(), "接收到关节状态: joint1=%.3f, joint2=%.3f, joint3=%.3f", 
+                               state_positions_[0], state_positions_[1], state_positions_[2]);
                 }
             );
             return hardware_interface::CallbackReturn::SUCCESS;
@@ -231,6 +237,13 @@ namespace mycontroller {
             const rclcpp::Time& time,
             const rclcpp::Duration& period
         ) override {
+            // 添加调试日志，检查当前状态
+            static int log_counter = 0;
+            if (++log_counter >= 100) { // 每100次调用打印一次
+                RCLCPP_INFO(node_->get_logger(), "读取关节状态: joint1=%.3f, joint2=%.3f, joint3=%.3f", 
+                           state_positions_[0], state_positions_[1], state_positions_[2]);
+                log_counter = 0;
+            }
             return hardware_interface::return_type::OK;
         }
 
@@ -246,9 +259,16 @@ namespace mycontroller {
             robot_interfaces::msg::Robot msg;
             // 填充关节命令数据
             for(int i = 0 ; i < 6 ; i++){
-                msg.joints[i].rad = (float)command_positions_[i];      // 位置命令
-                msg.joints[i].omega = (float)command_velocities_[i];   // 速度命令
-                msg.joints[i].torque = (float)command_efforts_[i];     // 力矩命令
+                msg.joints[i].rad = static_cast<float>(command_positions_[i]);      // 位置命令
+                msg.joints[i].omega = static_cast<float>(command_velocities_[i]);   // 速度命令
+                msg.joints[i].torque = static_cast<float>(command_efforts_[i]);     // 力矩命令
+            }
+            // 添加调试日志
+            static int log_counter = 0;
+            if (++log_counter >= 100) { // 每100次调用打印一次
+                RCLCPP_INFO(node_->get_logger(), "发送关节命令: joint1=%.3f, joint2=%.3f, joint3=%.3f", 
+                           command_positions_[0], command_positions_[1], command_positions_[2]);
+                log_counter = 0;
             }
             // 发布消息到主题，让其他节点（如驱动节点）接收
             publisher_->publish(msg);

@@ -17,6 +17,7 @@
 #include "moveit_msgs/msg/attached_collision_object.hpp"
 #include "shape_msgs/msg/solid_primitive.hpp"
 #include "visualization_msgs/msg/marker.hpp"
+#include <chrono>
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Core/util/Constants.h>
@@ -178,7 +179,7 @@ RoboticTask::RoboticTask(const rclcpp::Node::SharedPtr node) : node(node){
     try {
         kdl_dynamics_ = std::make_unique<robotic_task::KDLDynamics>();
         std::string urdf_path = "/home/kyy/cpp_project/visual_servoing/src/robotic_arm/urdf/robotic_arm.urdf";
-        if (kdl_dynamics_->initFromURDF(urdf_path, "world", "link6")) {
+        if (kdl_dynamics_->initFromURDF(urdf_path, "world", "link6") && velocity_ik_generator_RobotArmKinematics.loadFromURDF(urdf_path, "world", "link6")) {
             RCLCPP_INFO(node->get_logger(), "KDL动力学初始化成功");
         } else {
             RCLCPP_ERROR(node->get_logger(), "KDL动力学初始化失败");
@@ -290,13 +291,6 @@ rclcpp_action::GoalResponse RoboticTask::handle_goal(
 
     current_task_type = goal->action_type; // 设置当前任务类型
     RCLCPP_INFO(node->get_logger(), "接收到任务，类型: %d", current_task_type.load());
-    
-    // 通知任务线程有新任务
-    {
-        std::lock_guard<std::mutex> lock(task_mutex_);
-        has_new_task_ = true;
-    }
-    task_cv_.notify_one();
 
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -352,13 +346,11 @@ void robotic_task::RoboticTask::handle_accepted(
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
         is_running_arm_task = true;
+        has_new_task_ = true;
     }
     cancle_current_task = false;
 
     // 通知任务线程有新任务可用
-    task_mutex_.lock();
-    has_new_task_ = true;
-    task_mutex_.unlock();
     task_cv_.notify_one();
 }
 
@@ -430,13 +422,22 @@ void robotic_task::RoboticTask::arm_catch_task_handle(){
         psi->applyCollisionObject(collision_object);
     }
 
+    move_group_interface->setStartStateToCurrentState();
+    move_group_interface->clearPathConstraints();
+    move_group_interface->clearPoseTargets();
+    // move_group_interface->setNamedTarget("start_pos_2");
+    
+
     
     move_group_interface->setStartStateToCurrentState();
     move_group_interface->clearPathConstraints();
     move_group_interface->clearPoseTargets();
     // move_group_interface->setNamedTarget("start_pos_2");
     Eigen::VectorXd idle_joints_start2(6);
-    idle_joints_start2 << 0.0, 0.349065850, 0.226892803, -0.593411946, 0.0, 0.0 ;
+
+    // Finding:起始位置
+
+    idle_joints_start2 << 0.0, -0.122173048, -2.565634000, 1.099557429, 0.0, 0.0;
     std::vector<double> idle_joitns_start2_vec(idle_joints_start2.data(), idle_joints_start2.data() + idle_joints_start2.size());
     move_group_interface->setJointValueTarget(idle_joitns_start2_vec);
     
@@ -1219,6 +1220,9 @@ bool RoboticTask::execute_catch_task() {
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
     if(!handle_move_to_idle_point()) return false;
 
+    current_kfs_num += 1;
+
+    RCLCPP_INFO(node->get_logger(), "当前kfs数量: %d", current_kfs_num.load());
     return true;
 }
 
@@ -1250,11 +1254,15 @@ bool RoboticTask::execute_place_task() {
     transition_to_state(ArmTaskState::ROBOTIC_ARM_TASK_STATE_MOVE_TO_IDLE_POINT);
     if(!handle_move_to_idle_point()) return false;
     
+    current_kfs_num -= 1;
+
+    RCLCPP_INFO(node->get_logger(), "当前kfs数量: %d", current_kfs_num.load());
+
     return true;
 }
 
 
-// 状态处理函数
+// 状态处理函数`
 
 /**
  * @brief 处理空闲状态。
@@ -1271,10 +1279,10 @@ bool RoboticTask::handle_idle_state() {
     update_feedback();
 
     //**
-    // 检索一：设置开始前的空闲位置。
+    // Finding一：设置开始前的空闲位置。
     //*/
     Eigen::VectorXd idle_joints(6);
-    idle_joints << 0.0, 0.8726646259971648, 2.1816615649929116, 2.2514747350725445, 0.0, 0.0;
+    idle_joints << 0.0, -0.122173048, -2.565634000, 1.099557429, 0.0, 0.0;
     // 将Eigen向量转换为std::vector<double>，因为MoveIt接口需要此类型
     std::vector<double> idle_joints_vec(idle_joints.data(), idle_joints.data() + idle_joints.size());
     // 设置MoveIt的目标关节值
@@ -1451,10 +1459,7 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     // 使用当前姿态的小幅度修改作为目标
     auto current_pose = move_group_interface->getCurrentPose();
     
-    // 只移动位置，保持当前姿态
-    prepare_pose.position.x = current_pose.pose.position.x + 0.05;  // 只向前移动5cm
-    prepare_pose.position.y = current_pose.pose.position.y;
-    prepare_pose.position.z = current_pose.pose.position.z;
+    prepare_pose = calculate_prepare_pose_with_orientation(task_target_pos, 0.05, grasp_pose, static_cast<int>(ApproachMode::POS));
     
     // 保持当前姿态不变
     prepare_pose.orientation = current_pose.pose.orientation;
@@ -1640,7 +1645,7 @@ bool RoboticTask::handle_move_to_catch_point() {
     remove_kfs_collision("target_kfs", move_group_interface->getPlanningFrame());
 
     geometry_msgs::msg::Pose grasp_pose;
-    geometry_msgs::msg::Pose prepare_pose = calculate_target_pose(
+    geometry_msgs::msg::Pose prepare_pose = calculate_prepare_pose_with_orientation(
         task_target_pos, 0.05, grasp_pose, static_cast<int>(ApproachMode::POS)
     );
     
@@ -1719,14 +1724,14 @@ bool RoboticTask::handle_move_to_catch_point() {
                 // 安全检查：紧急停止条件
                 if (dynamics_params_.enable_acceleration_control && 
                     checkEmergencyStop(current_joint_positions, joint_velocities, joint_accelerations)) {
-                    RCLCPP_ERROR(node->get_logger(), "触发紧急停止条件");
-                    cancle_current_task = true;
+                    RCLCPP_ERROR(node->get_logger(), "触发紧急停止条件(not)");
+                    // cancle_current_task = true;
                     break;
                 }
                 
                 // 使用完整的动力学前馈补偿
                 Eigen::VectorXd tau_ff = dynamics_torque; // 包含惯性、科氏力、重力
-                
+                 
                 // 将动力学补偿转换为速度调整
                 for (int i = 0; i < joint_velocities.size(); ++i) {
                     // 使用补偿增益将力矩转换为速度修正量
@@ -1792,7 +1797,7 @@ bool RoboticTask::handle_move_to_catch_point_kfs_not_zero(){
             break;
 
         //**
-        // 检索四：抓取车上KFS位置
+        // Finding四：抓取车上KFS位置
         //*/ 
         case 1:
             {
@@ -2074,7 +2079,7 @@ bool RoboticTask::handle_move_to_release_point() {
     // 6. 添加释放前的位置确认
     
     //**
-    // 检索二：KFS 释放到车上的位置
+    // Finding二：KFS 释放到车上的位置
     //*/
 
     // 当前占位符实现:
@@ -2087,7 +2092,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 {
                 // KFS = 0: 释放到车上
                 Eigen::VectorXd kfs1_detach_pos(6);
-                kfs1_detach_pos << 0.017453293, -0.017453293, 4.101523742, 0.331612558, 0.0, 0.0;
+                kfs1_detach_pos << 0, -0.471238898, 1.396263402, 1.274090354, 0.0, 0.0;
                 std::vector<double> kfs1_detach_pos_vec(kfs1_detach_pos.data(), kfs1_detach_pos.data() + kfs1_detach_pos.size());
                 move_group_interface->setJointValueTarget(kfs1_detach_pos_vec);
 
@@ -2188,7 +2193,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 {
                 // KFS = 1: 释放到车上
                 Eigen::VectorXd kfs2_detach_pos(6);
-                kfs2_detach_pos << -0.087266463, 0.087266463, 3.420845333, -0.418879020, 0.0, 0.0;
+                kfs2_detach_pos << 0, -0.296705973, 0.715584993, 1.867502299, 0.0, 0.0;
                 std::vector<double> kfs2_detach_pos_vec(kfs2_detach_pos.data(), kfs2_detach_pos.data() + kfs2_detach_pos.size());
                 move_group_interface->setJointValueTarget(kfs2_detach_pos_vec);
 
@@ -2290,7 +2295,7 @@ bool RoboticTask::handle_move_to_release_point() {
                 {
                 // KFS = 2: 释放到车上
                 Eigen::VectorXd kfs3_hold_pos(6);
-                kfs3_hold_pos << -0.052359878, 0.087266463, 3.595305762, -2.111848394, -0.052359878, 0.0;
+                kfs3_hold_pos << 0, -0.314159265, 0.959931089, -0.610865238, 0.0, 0.0;
                 std::vector<double> kfs3_hold_pos_vec(kfs3_hold_pos.data(), kfs3_hold_pos.data() + kfs3_hold_pos.size());
                 move_group_interface->setJointValueTarget(kfs3_hold_pos_vec);
 
@@ -2399,7 +2404,7 @@ bool RoboticTask::handle_move_to_release_point() {
         // 放置任务：释放到指定位置
         // TODO: 使用任务目标作为释放位置
         //**
-        // 检索七：架子上的释放位置
+        // Finding七：架子上的释放位置
         //*/
         release_pose = task_target_pos;
         move_group_interface->setPoseTarget(release_pose);
@@ -2582,11 +2587,11 @@ bool RoboticTask::handle_move_to_idle_point() {
     // 定义空闲位置（可根据实际机械臂调整）
 
     //**
-    // 检索三：运行中的空闲位置
+    // Finding三：运行中的空闲位置
     //*/
 
     Eigen::VectorXd idle_joint_positions(6);
-    idle_joint_positions << 0.0, 1.064650844, 0.087266463, -1.989675347, 0.0, 0.0;
+    idle_joint_positions << 0.0, -0.122173048, -2.565634000, 1.099557429, 0.0, 0.0;
     std::vector<double> idle_joint_values(idle_joint_positions.data(), idle_joint_positions.data() + idle_joint_positions.size());
     move_group_interface->setJointValueTarget(idle_joint_values);
 
@@ -2602,6 +2607,8 @@ bool RoboticTask::handle_move_to_idle_point() {
     if (error_code != moveit::planning_interface::MoveItErrorCode::SUCCESS){
         RCLCPP_ERROR(node->get_logger(), "运行中的空闲位置失败");
         return false;
+    } else {
+        RCLCPP_INFO(node->get_logger(), "运行中的空闲位置成功");
     }
 
     const double dt = 1.0 / dynamics_params_.control_frequency;
@@ -2878,13 +2885,13 @@ Eigen::VectorXd RoboticTask::calculate_kfs_payload_compensation(
 
     //**
     // TODO: 从配置中读取负载质量
-    //  检索五：KFS质量
+    //  Finding五：KFS质量
     //*/
     double payload_mass = 0.5; // 假设负载质量为0.5kg
 
     //**
     // TODO: KFS坐标偏移
-    // 检索六：KFS坐标偏移 
+    // Finding六：KFS坐标偏移 
     //*/
     Eigen::Vector3d payload_com_in_ee = Eigen::Vector3d(0.0, 0.0, -0.175);
     try {

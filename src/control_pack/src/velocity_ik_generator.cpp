@@ -378,6 +378,7 @@ namespace RobotKinematicsKDL{
     Eigen::MatrixXd RobotArmKinematics::computeJacobian(
         const Eigen::VectorXd& joint_positions
     ) const {
+
         validateInput(joint_positions, "computeJacobian");
         checkFinite(joint_positions, "joint_positions");
 
@@ -406,20 +407,20 @@ namespace RobotKinematicsKDL{
         return jacobian;
     }
     
-    Eigen::MatrixXd RobotArmKinematics::computeJacobianDerivative(
-        const Eigen::VectorXd& joint_positions, 
-        const Eigen::VectorXd& joint_velocities
-    ) const {
-        validateInput(joint_positions, "computeJacobianDerivative:positions");
-        validateInput(joint_velocities, "computeJacobianDerivate:velocities");
-        checkFinite(joint_positions, "joint_positions");
-        checkFinite(joint_velocities, "joint_velocities");
+Eigen::MatrixXd RobotArmKinematics::computeJacobianDerivative(
+    const Eigen::VectorXd& joint_positions, 
+    const Eigen::VectorXd& joint_velocities
+) const {
+    validateInput(joint_positions, "computeJacobianDerivative:positions");
+    validateInput(joint_velocities, "computeJacobianDerivate:velocities");
+    checkFinite(joint_positions, "joint_positions");
+    checkFinite(joint_velocities, "joint_velocities");
 
-        // 转换为KDL格式
-        for (size_t i = 0 ; i < num_joints_ ; ++i){
-            kdl_joint_positions_(i) = joint_positions[i];
-            kdl_joint_velocities_(i) = joint_velocities[i];
-        }
+    // 转换为KDL格式
+    for (size_t i = 0 ; i < num_joints_ ; ++i){
+        kdl_joint_positions_(i) = joint_positions[i];
+        kdl_joint_velocities_(i) = joint_velocities[i];
+    }
 
         //计算雅克比矩阵导数
         KDL::Jacobian jacobian_dot(num_joints_);

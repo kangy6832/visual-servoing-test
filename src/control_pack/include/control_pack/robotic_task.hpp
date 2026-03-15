@@ -103,8 +103,10 @@ namespace robotic_task {
             moveit::core::RobotModelConstPtr robot_module;
             // 机械臂任务执行线程
             std::unique_ptr<std::thread> arm_task_thread;
+
             // 任务目标位置和姿态
             geometry_msgs::msg::Pose task_target_pos;
+            
             // 机械臂任务运行标志（原子变量，线程安全）
             std::atomic<bool> is_running_arm_task{false};
 

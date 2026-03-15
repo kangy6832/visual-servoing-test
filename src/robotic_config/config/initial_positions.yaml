@@ -1,9 +1,9 @@
 # Default initial positions for robotic_arm's ros2_control fake system
 
 initial_positions:
-  joint1: 0
-  joint2: 0
-  joint3: 1.570795
-  joint4: 0
-  joint5: 0
-  joint6: 0
+  joint1: 0.0
+  joint2: 0.418879020
+  joint3: 2.722713633
+  joint4: -1.570796327
+  joint5: 0.0
+  joint6: 0.0

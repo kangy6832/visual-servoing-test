@@ -40,9 +40,17 @@
         feedback_msg = std::make_shared<control_msgs::action::FollowJointTrajectory::Feedback>();
         joints_name_ = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
 
-        // 初始化joints_target（固定6个关节）
+
+        // 初始化关节位置 0.0, 0.418879020, 2.722713633, -1.570796327, 0.0, 0.0
+        joints_target.joints[0].rad = 0.0;
+        joints_target.joints[1].rad = 0.0;
+        joints_target.joints[2].rad = 0.0;
+        joints_target.joints[3].rad = 0.0;
+        joints_target.joints[4].rad = 0.0;
+        joints_target.joints[5].rad = 0.0;
+
+        // 初始化关节速度和力矩为0
         for (size_t i = 0; i < 6; ++i) {
-            joints_target.joints[i].rad = 0.0;
             joints_target.joints[i].omega = 0.0;
             joints_target.joints[i].torque = 0.0;
             // joints_target.joints[i].alpha = 0.0;
@@ -212,7 +220,7 @@
                     }
                 }
                 
-                // Send feedback
+                // Send feedback 发送反馈
                 feedback_msg->joint_names = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
                 feedback_msg->actual.positions.resize(6);
                 feedback_msg->actual.velocities.resize(6);
