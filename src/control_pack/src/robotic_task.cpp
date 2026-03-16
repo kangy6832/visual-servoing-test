@@ -770,16 +770,39 @@ geometry_msgs::msg::Pose RoboticTask::calculate_prepare_pose_with_orientation(
     Eigen::Quaterniond q(box_pos.orientation.w, box_pos.orientation.x, 
                          box_pos.orientation.y, box_pos.orientation.z);
     
-    // 使用固定方向沿X轴进行接近
-    Eigen::Vector3d approach_direction(1.0, 0.0, 0.0);
+    // 使用物体旋转矩阵计算表面法向量
+    Eigen::Matrix3d object_rotation = q.toRotationMatrix();
     
-    // 计算抓取和准备位置（使用固定偏移）
-    const double object_half_size_x = 0.35;
-    Eigen::Vector3d grasp_position = object_center - object_half_size_x * approach_direction;
+    // 计算从机器人原点到物体的方向向量
+    Eigen::Vector3d to_object = object_center - Eigen::Vector3d(0.0, 0.0, 0.0);
+    to_object.z() = 0; // 投影到XY平面
+    to_object.normalize();
+    
+    if(to_object.norm() < 1e-6) {
+        to_object = Eigen::Vector3d(1.0, 0.0, 0.0);
+    }
+    
+    // 选择靠近机器人手臂的侧面：选择与to_object方向相反的侧面
+    // to_object指向物体，所以-to_object是从物体指向机器人的方向
+    Eigen::Vector3d approach_direction = -to_object; // 从物体朝向机器人的方向
+    
+    // 重新计算抓取和准备位置（从靠近机器人的侧面接近）
+    const double object_half_size = 0.35;
+    Eigen::Vector3d grasp_position = object_center + object_half_size * approach_direction; // 注意是加号，因为approach_direction指向机器人
     Eigen::Vector3d prepare_position = grasp_position + approach_distance * approach_direction;
     
-    // 使用单位四元数表示末端执行器方向
-    Eigen::Quaterniond q_eef(1.0, 0.0, 0.0, 0.0);
+    // 计算末端执行器方向：垂直于物体表面（Z轴指向物体表面法向量）
+    // 使用已计算的物体旋转矩阵来确定表面法向量
+    Eigen::Vector3d object_normal = object_rotation * Eigen::Vector3d(0, 0, 1); // 物体Z轴作为表面法向量
+    
+    // 如果法向量指向下方，翻转使其指向上方
+    if(object_normal.z() < 0) {
+        object_normal = -object_normal;
+    }
+    
+    // 使用单位四元数表示末端执行器方向，Z轴垂直于物体表面
+    Eigen::Quaterniond q_eef = Eigen::Quaterniond::FromTwoVectors(Eigen::Vector3d(0, 0, 1), object_normal);
+    
     
     // 构造结果位姿（准备位置）
     geometry_msgs::msg::Pose result;
@@ -1277,6 +1300,7 @@ bool RoboticTask::handle_idle_state() {
     RCLCPP_INFO(node->get_logger(), "处理空闲状态");
     // 更新反馈给客户端，告知当前状态
     update_feedback();
+    move_group_interface->setStartStateToCurrentState();
 
     //**
     // Finding一：设置开始前的空闲位置。
@@ -1352,7 +1376,8 @@ bool RoboticTask::handle_idle_state() {
             // 获取当前关节位置：从MoveIt获取实际关节反馈
             // TODO: 从实际反馈获取当前关节位置
             std::vector<double> current_joint_positions = move_group_interface->getCurrentJointValues();
-            
+
+            RCLCPP_INFO(node->get_logger(), "当前关节位置: %f, %f, %f", current_joint_positions[0], current_joint_positions[1], current_joint_positions[2]);
 
             std::vector<double> joint_velocities(6);
             // 时间步长：10ms，对应100Hz控制频率
@@ -1370,6 +1395,7 @@ bool RoboticTask::handle_idle_state() {
 
                 joint_velocities[i] = feedforward_velocity + feedback_velocity;
                 current_joint_velocities[i] = joint_velocities[i];
+                RCLCPP_INFO(node->get_logger(), "关节%d速度: %f", i, joint_velocities[i]);
             } 
 
             if(kdl_dynamics_ && kdl_dynamics_->isInitialized() && dynamics_params_.enable_dynamics_compensation){
@@ -1392,6 +1418,7 @@ bool RoboticTask::handle_idle_state() {
                         // 应用动力学补偿增益调整关节速度
                         for (size_t i = 0; i < 6; ++i) {
                             joint_velocities[i] += dynamics_params_.compensation_gain * dynamics_torque(i);
+                            RCLCPP_INFO(node->get_logger(), "关节%d速度补偿: %f", i, joint_velocities[i]);
                         }
                     }
                     
@@ -1406,6 +1433,7 @@ bool RoboticTask::handle_idle_state() {
             Eigen::VectorXd joint_velocities_eigen(6);
             for(size_t i = 0 ; i < 6 ; ++i){
                 joint_velocities_eigen(i) = joint_velocities[i];
+                RCLCPP_INFO(node->get_logger(), "发送速度命令到控制器:关节%d速度: %f", i, joint_velocities[i]);
             }
 
             // 调用硬件接口发送关节速度命令
@@ -1419,6 +1447,8 @@ bool RoboticTask::handle_idle_state() {
     Eigen::VectorXd zero_velocities(6);
     zero_velocities.setZero();  // 设置所有速度为0
     send_joint_velocity_to_hardware(zero_velocities);
+
+    RCLCPP_INFO(node->get_logger(), "轨迹执行完毕，停止机器人");
 
     // 短暂延迟：确保停止命令生效
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1464,7 +1494,7 @@ bool RoboticTask::handle_move_to_ready_catch_point() {
     // 保持当前姿态不变
     prepare_pose.orientation = current_pose.pose.orientation;
     
-    RCLCPP_INFO(node->get_logger(), "超保守策略 - 小幅移动目标: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
+    RCLCPP_INFO(node->get_logger(), "prepare pose: Pos(%.3f, %.3f, %.3f), Ori(%.3f, %.3f, %.3f, %.3f)",
                 prepare_pose.position.x, prepare_pose.position.y, prepare_pose.position.z,
                 prepare_pose.orientation.x, prepare_pose.orientation.y,
                 prepare_pose.orientation.z, prepare_pose.orientation.w);

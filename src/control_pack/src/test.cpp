@@ -46,9 +46,9 @@ private:
 
         // ===== 填写目标位姿（camera_link 下的一个简单坐标）=====
         // 使用一个更容易到达的位置 - 机器人前方
-        goal_msg.target_pose.position.x = 0.35;     // 前方30cm
-        goal_msg.target_pose.position.y = 0.0;     // 正中间
-        goal_msg.target_pose.position.z = 0.2;     // 高度30cm
+        goal_msg.target_pose.position.x = 0.0;     // 前方30cm
+        goal_msg.target_pose.position.y = -0.2;     // 正中间
+        goal_msg.target_pose.position.z = 0.8;     // 高度30cm
 
         goal_msg.target_pose.orientation.w = 1.0;   // 朝下
         goal_msg.target_pose.orientation.x = 0.0;
